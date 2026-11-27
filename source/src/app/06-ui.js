@@ -758,7 +758,7 @@ function fieldRow(obj, fd) {
       for (const [v, t] of (typeof fd.options === 'function' ? fd.options() : fd.options)) s.append(el('option', { value: v }, t));
       s.addEventListener('change', () => { const pre = fd.beforeSet ? fd.beforeSet(obj) : null; pushUndo(); setProp(obj, fd.key, s.value); if (fd.onSet) { fd.onSet(obj, s.value, pre); buildProps(); } });
       ctl.append(s);
-      update = (P) => { if (document.activeElement !== s) s.value = String(P[fd.key]); };
+      update = (P) => { if (document.activeElement !== s) s.value = String(P[fd.key]); if (fd.anim) { const st = keyState(obj, fd.key); s.classList.toggle('keyed', st === 'keyed'); s.classList.toggle('animated', st === 'animated'); } };
       break;
     }
     case 'button': {
