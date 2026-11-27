@@ -1317,7 +1317,7 @@
         const cutK = b.cutF != null ? 1 + 1.2 * Math.min(1, (this.frame - b.cutF) * tsK / 60) : 1;
         if (tone > 0.001 && b.poseClusters.length) this._shapeMatch(b.poseClusters, kAdj(Math.min(1, tone * tone * 0.5 * cutK)), false, 0, 12 + (Engine.KOCTW - 12) * b.ko, Engine.KODAMP * b.ko);
         // squeezed or bent far out of its pose (a press, a wall pin) the body gives way instead of standing like a statue
-        if (!b.koHit && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
+        if (!b.koHit && !b.params.rend && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
         if (b.skeleton) this._shapeMatch(b.clusters, 0.85, false, b.firm);
         else if (b.softSeg) this._shapeMatch(b.clusters, kAdj(b.firm), true, 0, 12 + (Engine.KOCTW - 12) * b.ko);
         else if (b.rig > 0) this._shapeMatch(b.clusters, Math.min(1, b.rig * b.rig * 0.9), true);
@@ -1662,7 +1662,7 @@
   Engine.COLDENS = 1500; // kg/m^3 for animated colliders
   Engine.SPIKEGRIP = typeof process !== 'undefined' && process.env && process.env.SPIKEGRIP ? +process.env.SPIKEGRIP : 1;
   Engine.LIGHTM = 150; // kg: heavier colliders (hammers, rams, presses) still act as unstoppable
-  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
+  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.RENDV = 1.2; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
   Engine.DRIVE_EASE = 0.35; // share of the way to the animated shape the muscles move each frame // 1/s²: how hard a driven (hit but still animated) body holds its animated stance
   Engine.RELVMAX = 4; // m/s: fastest a limb may move relative to its body when physics takes over from an animation
   Engine.FASTV = 6; // m/s: only faster colliders have a momentum budget
@@ -1957,6 +1957,14 @@
               if (vn > 2) { this.ct[i] = 3; this.ct[j] = 3; const cv = this.cvn; if (vn > cv[i]) cv[i] = vn; if (vn > cv[j]) cv[j] = vn; }
               if (vn > bI.koSpeed) bI.koHit = true;
               if (vn > bJ.koSpeed) bJ.koHit = true;
+              // a superhuman landing a blow (a headbutt, a punch, a knee): whatever it strikes at speed is torn apart
+              const rI = bI.params.rend && !bJ.params.rend, rJ = bJ.params.rend && !bI.params.rend;
+              if ((rI || rJ) && vn > Engine.RENDV) {
+                const t = rI ? j : i, bt = rI ? bJ : bI;
+                bt.koHit = true;
+                if (nbb[t] < this.nb0[t] || vn > Engine.RENDV * 1.6) this._breakParticle(t);
+                this.ct[t] = 3; const cv = this.cvn; if (vn > cv[t]) cv[t] = vn;
+              }
               // already torn flesh shatters at weapon speeds; intact flesh only at extreme ones (a bullet, a fast stone)
               const tI = bI.shatter * this.shm[i] * (nbb[i] > 0 ? 1 : Engine.BLUNTX), tJ = bJ.shatter * this.shm[j] * (nbb[j] > 0 ? 1 : Engine.BLUNTX);
               if (vn > tI && nbb[i] < this.nb0[i]) { this._breakParticle(i); }

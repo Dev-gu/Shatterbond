@@ -1422,7 +1422,9 @@ root.SB_MHBODY = M; if (typeof module !== "undefined" && module.exports) module.
       else band = quad ? Math.max(0.02, 0.3 * lenC) : BAND[c] * sz;
       const jr = thumb ? 0.035 * sz : (c === 5 || c === 8 ? 0.11 : 0.13) * sz * (quad ? 1.6 : 1);
       if (nvP) band *= 0.8;
-      J[c] = { a: L.a, nv, nvP: nvP || nv, band, bandP: band, branch, jr, p };
+      // the head itself is rigid (skull): only the neck side of its joint bends, or a nod squashes the face into the throat
+      const bandC = !quad && c === 0 ? 0.018 * sz : band;
+      J[c] = { a: L.a, nv, nvP: nvP || nv, band, bandP: band, bandC, branch, jr, p };
     }
     // girdles (humans with finger and girdle bones): pivot, shoulder joint and reach, in builder coordinates
     const GIRD = (!quad && NS >= 49 && first[5] && first[8]) ? [5, 8].map((u, L) => {
@@ -1434,9 +1436,9 @@ root.SB_MHBODY = M; if (typeof module !== "undefined" && module.exports) module.
     const sm = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
     // share of the child side at a point: ramp across the plane, limited to near the joint for branches
     const side = (c, x, y, z, bone, fromParent) => {
-      const j = J[c], b = (fromParent ? j.bandP : j.band) * (bone ? 0.3 : 1), nv = fromParent ? j.nvP : j.nv;
+      const j = J[c], bk = bone ? 0.3 : 1, b = (fromParent ? j.bandP : j.band) * bk, bc = Math.min(b, j.bandC * bk), nv = fromParent ? j.nvP : j.nv;
       const sd = (x - j.a[0]) * nv[0] + (y - j.a[1]) * nv[1] + (z - j.a[2]) * nv[2];
-      const t = sm(-b, b, sd);
+      const t = bc === b ? sm(-b, b, sd) : sd < 0 ? 0.5 * sm(-b, 0, sd) : 0.5 + 0.5 * sm(0, bc, sd);
       let r = 1;
       if (j.branch) { const dj = Math.hypot(x - j.a[0], y - j.a[1], z - j.a[2]); r = 1 - sm(j.jr, j.jr * 1.6, dj); }
       return [t, r];
@@ -4270,7 +4272,7 @@ fn candOk(i: u32) -> bool {
         const cutK = b.cutF != null ? 1 + 1.2 * Math.min(1, (this.frame - b.cutF) * tsK / 60) : 1;
         if (tone > 0.001 && b.poseClusters.length) this._shapeMatch(b.poseClusters, kAdj(Math.min(1, tone * tone * 0.5 * cutK)), false, 0, 12 + (Engine.KOCTW - 12) * b.ko, Engine.KODAMP * b.ko);
         // squeezed or bent far out of its pose (a press, a wall pin) the body gives way instead of standing like a statue
-        if (!b.koHit && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
+        if (!b.koHit && !b.params.rend && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
         if (b.skeleton) this._shapeMatch(b.clusters, 0.85, false, b.firm);
         else if (b.softSeg) this._shapeMatch(b.clusters, kAdj(b.firm), true, 0, 12 + (Engine.KOCTW - 12) * b.ko);
         else if (b.rig > 0) this._shapeMatch(b.clusters, Math.min(1, b.rig * b.rig * 0.9), true);
@@ -4615,7 +4617,7 @@ fn candOk(i: u32) -> bool {
   Engine.COLDENS = 1500; // kg/m^3 for animated colliders
   Engine.SPIKEGRIP = typeof process !== 'undefined' && process.env && process.env.SPIKEGRIP ? +process.env.SPIKEGRIP : 1;
   Engine.LIGHTM = 150; // kg: heavier colliders (hammers, rams, presses) still act as unstoppable
-  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
+  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.RENDV = 1.2; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
   Engine.DRIVE_EASE = 0.35; // share of the way to the animated shape the muscles move each frame // 1/s²: how hard a driven (hit but still animated) body holds its animated stance
   Engine.RELVMAX = 4; // m/s: fastest a limb may move relative to its body when physics takes over from an animation
   Engine.FASTV = 6; // m/s: only faster colliders have a momentum budget
@@ -4910,6 +4912,14 @@ fn candOk(i: u32) -> bool {
               if (vn > 2) { this.ct[i] = 3; this.ct[j] = 3; const cv = this.cvn; if (vn > cv[i]) cv[i] = vn; if (vn > cv[j]) cv[j] = vn; }
               if (vn > bI.koSpeed) bI.koHit = true;
               if (vn > bJ.koSpeed) bJ.koHit = true;
+              // a superhuman landing a blow (a headbutt, a punch, a knee): whatever it strikes at speed is torn apart
+              const rI = bI.params.rend && !bJ.params.rend, rJ = bJ.params.rend && !bI.params.rend;
+              if ((rI || rJ) && vn > Engine.RENDV) {
+                const t = rI ? j : i, bt = rI ? bJ : bI;
+                bt.koHit = true;
+                if (nbb[t] < this.nb0[t] || vn > Engine.RENDV * 1.6) this._breakParticle(t);
+                this.ct[t] = 3; const cv = this.cvn; if (vn > cv[t]) cv[t] = vn;
+              }
               // already torn flesh shatters at weapon speeds; intact flesh only at extreme ones (a bullet, a fast stone)
               const tI = bI.shatter * this.shm[i] * (nbb[i] > 0 ? 1 : Engine.BLUNTX), tJ = bJ.shatter * this.shm[j] * (nbb[j] > 0 ? 1 : Engine.BLUNTX);
               if (vn > tI && nbb[i] < this.nb0[i]) { this._breakParticle(i); }
@@ -5213,11 +5223,11 @@ const G_MOLECULAR = (humanoid) => ({ id: 'molecular', title: humanoid ? 'Body ph
   F('release', 'Physics from frame', 'int', { min: -1, max: 100000, step: 1, noanim: true, help: 'Before this frame the body follows its keyframes, then physics takes over. -1 is automatic: a body with keyframed location or rotation follows them until its last key, otherwise physics runs from the start.' }),
   F('velocity', 'Launch velocity', 'vec3', { step: 0.5, unit: 'm/s', noanim: true }),
 ] });
-const BODY_TYPES = { adult: { height: 1.8, fat: 0.2, build: 0.6 }, child: { height: 1.25, fat: 0.25, build: 0.3 }, heavy: { height: 1.78, fat: 0.8, build: 0.5 }, dog: { height: 0.62, fat: 0.3 }, horse: { height: 1.6, fat: 0.3 } };
+const BODY_TYPES = { adult: { height: 1.8, fat: 0.2, build: 0.6 }, child: { height: 1.25, fat: 0.25, build: 0.3 }, heavy: { height: 1.78, fat: 0.8, build: 0.5 }, dog: { height: 0.62, fat: 0.3 }, horse: { height: 1.6, fat: 0.3 }, super: { height: 1.85, fat: 0.12, build: 0.9 } };
 const G_BODY = { id: 'body', title: 'Body', fields: [
-  F('bodyType', 'Body type', 'select', { options: [['adult', 'Adult'], ['child', 'Child'], ['heavy', 'Heavier build'], ['dog', 'Dog'], ['horse', 'Horse']], noanim: true,
+  F('bodyType', 'Body type', 'select', { options: [['adult', 'Adult'], ['child', 'Child'], ['heavy', 'Heavier build'], ['super', 'Superhuman'], ['dog', 'Dog'], ['horse', 'Horse']], noanim: true,
     onSet: (o, v) => { const D = BODY_TYPES[v]; if (D) for (const k in D) setProp(o, k, D[k]); if (v === 'dog' || v === 'horse') { setProp(o, 'pose', 'stand'); if (o.name === 'Humanoid' || /^Humanoid/.test(o.name)) o.name = v === 'dog' ? 'Dog' : 'Horse'; } },
-    help: 'Same molecular body system for every type. Choosing one sets a typical height and build, which you can still change.' }),
+    help: 'Same molecular body system for every type. Choosing one sets a typical height and build, which you can still change. Superhuman: flesh and bone about 40 times tougher, almost never knocked out, and anything it hits at speed (a headbutt, a punch, a knee) tears apart.' }),
   F('model', 'Body model', 'select', { options: [['anatomical', 'Anatomical (realistic)'], ['sculpt', 'Classic sculpt']], noanim: true, help: 'Anatomical is a realistic human body (from the CC0 MakeHuman base mesh). Classic is the earlier hand-built sculpt.' }),
   F('pose', 'Pose', 'select', { options: POSE_OPTS }),
   F('height', 'Height', 'num', { min: 0.5, max: 3, step: 0.01, unit: 'm', noanim: true }),
@@ -6676,6 +6686,18 @@ function clipQ(C) {
   return D.q;
 }
 function clipHip(C) { if (C.hip) return C.hip; clipQ(C); return _clipCache.get(C).hip; }
+// segment rotation (row-major 3x3, as RIG keeps them) <-> quaternion, and limiting how far a segment turns from its parent
+const NECK_MAX = 30 * Math.PI / 180, HEAD_MAX = 34 * Math.PI / 180;
+function g2q(g) { return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().set(g[0], g[1], g[2], 0, g[3], g[4], g[5], 0, g[6], g[7], g[8], 0, 0, 0, 0, 1)); }
+function q2g(q) { return new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(q)).transpose().elements.slice(); }
+function clampRel(G, s, p, max) {
+  const qp = g2q(G[p]), rel = qp.clone().invert().multiply(g2q(G[s]));
+  if (rel.w < 0) { rel.x = -rel.x; rel.y = -rel.y; rel.z = -rel.z; rel.w = -rel.w; }
+  const ang = 2 * Math.acos(Math.min(1, rel.w));
+  if (!(ang > max)) return;
+  rel.slerp(new THREE.Quaternion(), 1 - max / ang);
+  G[s] = q2g(qp.multiply(rel));
+}
 function packClip(name, fps, n, q, hip) {
   const qp = q.map(a => { if (!a || !a.length) return ''; const i16 = new Int16Array(a.length); for (let k = 0; k < a.length; k++) i16[k] = Math.round(Math.max(-1, Math.min(1, a[k])) * 32767); return bytesToB64(new Uint8Array(i16.buffer)); });
   return { name, fps, n, qp, hp: bytesToB64(new Uint8Array(Float32Array.from(hip).buffer)), src: 'mixamo', v: 2 };
@@ -6770,6 +6792,9 @@ const RIG = {
       const x = ax + (bx - ax) * u, y = ay + (by - ay) * u, z = az + (bz - az) * u, w = aw + (bw - aw) * u, l = Math.hypot(x, y, z, w) || 1;
       G[s] = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(x / l, y / l, z / l, w / l))).transpose().elements.slice();
     }
+    // a neck and head can only bend so far: Mixamo clips (a flying knee looking down at the target) can tuck the head
+    // much further than our skin can follow, which crushed the face into the chest and crumpled the neck
+    if (G[0] && G[1] && G[2]) { clampRel(G, 1, 2, NECK_MAX); clampRel(G, 0, 1, HEAD_MAX); }
     const HP = clipHip(C), hp = [0, 1, 2].map(k => HP[3 * a + k] + (HP[3 * b + k] - HP[3 * a + k]) * u);
     // forward kinematics down the segment tree with our own bone lengths; fingers the clip has no keys for follow the hand
     const P0 = R0.P0, par = BLD.FK_PARENT, order = [4, 3, 2, 1, 0, 47, 48, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].filter(s => s < NS);
@@ -8332,6 +8357,12 @@ const SIM = {
       goo: P.goo != null ? P.goo : 0.3, plastic: P.plastic != null ? P.plastic : 0.2, damping: P.damping != null ? P.damping : 0.2,
       firmness: P.firmness != null ? P.firmness : 0.05, koHold: P.koHold != null ? P.koHold : 0.18, spill: P.spill != null ? P.spill : 0.5, knockout: P.knockout != null ? P.knockout : 2.5, boneSnap: P.boneSnap != null ? P.boneSnap : 5.5 };
   },
+  // a superhuman: the same body, but it takes an extreme force to hurt it, and what it hits at speed tears apart
+  superParams(bp) {
+    bp.strength *= 40; bp.shatter *= 20; bp.knockout = Math.max(bp.knockout, 80); bp.boneSnap = 1e4; bp.plastic = 0; bp.crush = 0; bp.rend = 1;
+    bp.koHold = Math.max(bp.koHold, 0.5);
+    return bp;
+  },
   async begin() {
     if (this.building) return false;
     this.building = true;
@@ -8344,7 +8375,7 @@ const SIM = {
         const o = L.obj, d = L.data;
         const T = this.placement(o, start), P = T.P;
         const rel = this.releaseOf(o, P), kin = rel > start;
-        const params = Object.assign(this.bodyParams(o, P), { stand: !!P.stand, startAsleep: !!P.sleep && !kin && Math.hypot(...P.velocity) < 1e-6, anchorStrength: 1, canSleep: true, react: P.react !== false, drive: P.animDrive !== false });
+        const params = Object.assign(this.bodyParams(o, P), P.bodyType === 'super' && o.type === 'humanoid' ? this.superParams(this.bodyParams(o, P)) : {}, { stand: !!P.stand, startAsleep: !!P.sleep && !kin && Math.hypot(...P.velocity) < 1e-6, anchorStrength: 1, canSleep: true, react: P.react !== false, drive: P.animDrive !== false });
         return { count: d.count, rest: d.rest, tissue: d.tissue, seg: d.seg, sk: d.sk, skw: d.skw, invMass: d.invMass, smw: d.smw, shm: d.shm, anchor: d.anchor, boneRef: d.boneRef,
           bonds: d.bonds, bondRest: d.bondRest, bondK: d.bondK, bondS: d.bondS, bondC: d.bondC, hasSkeleton: d.hasSkeleton, softSegments: d.softSegments, radius: d.radius, spacing: d.spacing,
           pos: T.p, quat: T.q, vel: kin ? [0, 0, 0] : P.velocity, params, kinematic: kin };
@@ -8503,6 +8534,7 @@ const SIM = {
       this.prevCols.clear(); for (const c of cols) this.prevCols.set(c.key, c);
       const bodies = this.layout.map(L => {
         const o = L.obj, P = evalProps(o, f), bp = this.bodyParams(o, P);
+        if (P.bodyType === 'super' && o.type === 'humanoid') this.superParams(bp);
         bp.drag = WP.airDrag;
         const rel = this.releaseOf(o, P);
         if (rel > W.props.frameStart && f <= rel) {

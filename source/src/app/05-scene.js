@@ -462,6 +462,12 @@ const SIM = {
       goo: P.goo != null ? P.goo : 0.3, plastic: P.plastic != null ? P.plastic : 0.2, damping: P.damping != null ? P.damping : 0.2,
       firmness: P.firmness != null ? P.firmness : 0.05, koHold: P.koHold != null ? P.koHold : 0.18, spill: P.spill != null ? P.spill : 0.5, knockout: P.knockout != null ? P.knockout : 2.5, boneSnap: P.boneSnap != null ? P.boneSnap : 5.5 };
   },
+  // a superhuman: the same body, but it takes an extreme force to hurt it, and what it hits at speed tears apart
+  superParams(bp) {
+    bp.strength *= 40; bp.shatter *= 20; bp.knockout = Math.max(bp.knockout, 80); bp.boneSnap = 1e4; bp.plastic = 0; bp.crush = 0; bp.rend = 1;
+    bp.koHold = Math.max(bp.koHold, 0.5);
+    return bp;
+  },
   async begin() {
     if (this.building) return false;
     this.building = true;
@@ -474,7 +480,7 @@ const SIM = {
         const o = L.obj, d = L.data;
         const T = this.placement(o, start), P = T.P;
         const rel = this.releaseOf(o, P), kin = rel > start;
-        const params = Object.assign(this.bodyParams(o, P), { stand: !!P.stand, startAsleep: !!P.sleep && !kin && Math.hypot(...P.velocity) < 1e-6, anchorStrength: 1, canSleep: true, react: P.react !== false, drive: P.animDrive !== false });
+        const params = Object.assign(this.bodyParams(o, P), P.bodyType === 'super' && o.type === 'humanoid' ? this.superParams(this.bodyParams(o, P)) : {}, { stand: !!P.stand, startAsleep: !!P.sleep && !kin && Math.hypot(...P.velocity) < 1e-6, anchorStrength: 1, canSleep: true, react: P.react !== false, drive: P.animDrive !== false });
         return { count: d.count, rest: d.rest, tissue: d.tissue, seg: d.seg, sk: d.sk, skw: d.skw, invMass: d.invMass, smw: d.smw, shm: d.shm, anchor: d.anchor, boneRef: d.boneRef,
           bonds: d.bonds, bondRest: d.bondRest, bondK: d.bondK, bondS: d.bondS, bondC: d.bondC, hasSkeleton: d.hasSkeleton, softSegments: d.softSegments, radius: d.radius, spacing: d.spacing,
           pos: T.p, quat: T.q, vel: kin ? [0, 0, 0] : P.velocity, params, kinematic: kin };
@@ -633,6 +639,7 @@ const SIM = {
       this.prevCols.clear(); for (const c of cols) this.prevCols.set(c.key, c);
       const bodies = this.layout.map(L => {
         const o = L.obj, P = evalProps(o, f), bp = this.bodyParams(o, P);
+        if (P.bodyType === 'super' && o.type === 'humanoid') this.superParams(bp);
         bp.drag = WP.airDrag;
         const rel = this.releaseOf(o, P);
         if (rel > W.props.frameStart && f <= rel) {

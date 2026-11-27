@@ -997,7 +997,9 @@
       else band = quad ? Math.max(0.02, 0.3 * lenC) : BAND[c] * sz;
       const jr = thumb ? 0.035 * sz : (c === 5 || c === 8 ? 0.11 : 0.13) * sz * (quad ? 1.6 : 1);
       if (nvP) band *= 0.8;
-      J[c] = { a: L.a, nv, nvP: nvP || nv, band, bandP: band, branch, jr, p };
+      // the head itself is rigid (skull): only the neck side of its joint bends, or a nod squashes the face into the throat
+      const bandC = !quad && c === 0 ? 0.018 * sz : band;
+      J[c] = { a: L.a, nv, nvP: nvP || nv, band, bandP: band, bandC, branch, jr, p };
     }
     // girdles (humans with finger and girdle bones): pivot, shoulder joint and reach, in builder coordinates
     const GIRD = (!quad && NS >= 49 && first[5] && first[8]) ? [5, 8].map((u, L) => {
@@ -1009,9 +1011,9 @@
     const sm = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
     // share of the child side at a point: ramp across the plane, limited to near the joint for branches
     const side = (c, x, y, z, bone, fromParent) => {
-      const j = J[c], b = (fromParent ? j.bandP : j.band) * (bone ? 0.3 : 1), nv = fromParent ? j.nvP : j.nv;
+      const j = J[c], bk = bone ? 0.3 : 1, b = (fromParent ? j.bandP : j.band) * bk, bc = Math.min(b, j.bandC * bk), nv = fromParent ? j.nvP : j.nv;
       const sd = (x - j.a[0]) * nv[0] + (y - j.a[1]) * nv[1] + (z - j.a[2]) * nv[2];
-      const t = sm(-b, b, sd);
+      const t = bc === b ? sm(-b, b, sd) : sd < 0 ? 0.5 * sm(-b, 0, sd) : 0.5 + 0.5 * sm(0, bc, sd);
       let r = 1;
       if (j.branch) { const dj = Math.hypot(x - j.a[0], y - j.a[1], z - j.a[2]); r = 1 - sm(j.jr, j.jr * 1.6, dj); }
       return [t, r];
