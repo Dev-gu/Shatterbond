@@ -138,7 +138,7 @@ function extractColliders() {
       }
       let spin = null;
       if (c.spinLocal) { _w.set(c.spinLocal[0], c.spinLocal[1], c.spinLocal[2]).applyQuaternion(_q); spin = [_w.x, _w.y, _w.z]; }
-      const shatterMul = (TYPES[o.type].cat === 'weapon' || P.power != null) ? 1 / Math.max(0.05, P.power || 1) : 1;
+      const shatterMul = c.blunt ? 1 : (TYPES[o.type].cat === 'weapon' || P.power != null) ? 1 / Math.max(0.05, P.power || 1) : 1; // frames, walls and base plates of a sharp weapon are blunt: lying on them must not slice the body
       out.push({ key: o.id + ':' + c.key, shape: c.shape, dims, p: [_p.x, _p.y, _p.z], q: [_q.x, _q.y, _q.z, _q.w], bound, friction: c.friction != null ? c.friction : 0.5, spin, shatterMul });
     };
     v.root.traverse(visit);

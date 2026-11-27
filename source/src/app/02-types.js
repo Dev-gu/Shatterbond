@@ -244,7 +244,7 @@ TYPES.saw = {
     view.rim = mkMesh(new THREE.TorusGeometry(1, 0.03, 10, 96), stdMat('#121418', 0.4, 0.3)); view.rim.rotation.y = Math.PI / 2;
     view.mover.add(view.disc, view.rim, view.discCol);
     view.wMat = stdMat('#6b6e74', 0.85, 0);
-    view.wall = mkMesh(GEO.box, view.wMat); colliderOf(view.wall, 'box', 'wall');
+    view.wall = mkMesh(GEO.box, view.wMat); colliderOf(view.wall, 'box', 'wall', null, { blunt: true });
     view.root.add(view.wall);
     view.pick = [view.disc, view.wall];
   },
@@ -400,7 +400,7 @@ TYPES.guillotine = {
   build(view) {
     view.bMat = stdMat('#d7dbe3', 0.15, 0.95); view.fMat = stdMat('#5a3e2b', 0.75, 0);
     view.blade = mkMesh(GEO.box, view.bMat); colliderOf(view.blade, 'box', 'blade');
-    view.posts = [0, 1].map(k => colliderOf(mkMesh(GEO.box, view.fMat), 'box', 'post' + k));
+    view.posts = [0, 1].map(k => colliderOf(mkMesh(GEO.box, view.fMat), 'box', 'post' + k, null, { blunt: true }));
     view.beam = mkMesh(GEO.box, view.fMat);
     view.root.add(view.blade, ...view.posts, view.beam); view.pick = [view.blade, ...view.posts, view.beam];
   },
@@ -431,7 +431,7 @@ TYPES.spikes = {
   ] }, { id: 'material', title: 'Colors', fields: [F('color', 'Spikes', 'color'), F('baseColor', 'Base', 'color')] }, G_VIS],
   build(view) {
     view.sMat = stdMat('#b9bec8', 0.2, 0.9); view.bMat = stdMat('#3a3d44', 0.6, 0.2);
-    view.base = mkMesh(GEO.box, view.bMat); colliderOf(view.base, 'box', 'base');
+    view.base = mkMesh(GEO.box, view.bMat); colliderOf(view.base, 'box', 'base', null, { blunt: true });
     view.root.add(view.base); view.spikes = []; view.pick = [view.base];
   },
   apply(view, P) {

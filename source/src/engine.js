@@ -754,7 +754,7 @@
       }
       // a body being pressed by a collider also collides with itself through its whole volume, so squashed flesh
       // can't pass through itself and lose its volume: it has to go somewhere, which is what bursts it open
-      for (let a = 0; a < nbl; a++) { const A = bl[a]; A.selfCol = !!A.softSeg && !A.asleep && !A.kinematic && this.frame - (A.colT ?? -99) < 3; if (A.selfCol) this._xb[a] = 1; }
+      for (let a = 0; a < nbl; a++) { const A = bl[a]; A.selfCol = !!A.softSeg && !A.asleep && !A.kinematic && this.frame - (A.colT ?? -99) < 150 && this.frame - (A.bluntT ?? -99) < 3; if (A.selfCol) this._xb[a] = 1; }
       this._xFast = xs;
       if (xs > 0) ns = Math.min(Math.max(ns, Math.ceil(xs / Math.max(0.006, minSp * 0.9))), Math.max(ns, inp.maxSubsteps || 40));
     }
@@ -1129,7 +1129,9 @@
             x[i3] += nx * pen; x[i3 + 1] += ny * pen; x[i3 + 2] += nz * pen;
             // a fast projectile's contacts do not steer the shape fit (that would drag whole clusters along at its speed)
             if (!spent) ct[i] = cB[c] < Infinity ? 3 : 2;
-            b.touchT = this.frame; if (cB[c] === Infinity && cshat[c] >= 0.45) b.colT = this.frame; // blunt only: spikes and blades cut, they do not crush
+            b.touchT = this.frame; if (cB[c] === Infinity && cshat[c] >= 0.45) { // blunt only: spikes and blades cut, they do not crush
+              b.bluntT = this.frame; // and only a moving one starts a crush (lying on a table or spike base is not one)
+              if (sdx * sdx + sdy * sdy + sdz * sdz > 0.0025 * h * h) b.colT = this.frame; }
             if (iv > b.koSpeed) b.koHit = true;
             if (iv > b.boneSnap && b.skeleton) { const br_ = this.boneRef[i]; if (br_ >= 0 && !dead[br_]) this._snapBone(br_, nx, ny, nz); }
             // sharp weapons (blades, saws, spikes) also cut with their sliding edge, not only by ramming

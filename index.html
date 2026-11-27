@@ -3707,7 +3707,7 @@ fn candOk(i: u32) -> bool {
       }
       // a body being pressed by a collider also collides with itself through its whole volume, so squashed flesh
       // can't pass through itself and lose its volume: it has to go somewhere, which is what bursts it open
-      for (let a = 0; a < nbl; a++) { const A = bl[a]; A.selfCol = !!A.softSeg && !A.asleep && !A.kinematic && this.frame - (A.colT ?? -99) < 3; if (A.selfCol) this._xb[a] = 1; }
+      for (let a = 0; a < nbl; a++) { const A = bl[a]; A.selfCol = !!A.softSeg && !A.asleep && !A.kinematic && this.frame - (A.colT ?? -99) < 150 && this.frame - (A.bluntT ?? -99) < 3; if (A.selfCol) this._xb[a] = 1; }
       this._xFast = xs;
       if (xs > 0) ns = Math.min(Math.max(ns, Math.ceil(xs / Math.max(0.006, minSp * 0.9))), Math.max(ns, inp.maxSubsteps || 40));
     }
@@ -4082,7 +4082,9 @@ fn candOk(i: u32) -> bool {
             x[i3] += nx * pen; x[i3 + 1] += ny * pen; x[i3 + 2] += nz * pen;
             // a fast projectile's contacts do not steer the shape fit (that would drag whole clusters along at its speed)
             if (!spent) ct[i] = cB[c] < Infinity ? 3 : 2;
-            b.touchT = this.frame; if (cB[c] === Infinity && cshat[c] >= 0.45) b.colT = this.frame; // blunt only: spikes and blades cut, they do not crush
+            b.touchT = this.frame; if (cB[c] === Infinity && cshat[c] >= 0.45) { // blunt only: spikes and blades cut, they do not crush
+              b.bluntT = this.frame; // and only a moving one starts a crush (lying on a table or spike base is not one)
+              if (sdx * sdx + sdy * sdy + sdz * sdz > 0.0025 * h * h) b.colT = this.frame; }
             if (iv > b.koSpeed) b.koHit = true;
             if (iv > b.boneSnap && b.skeleton) { const br_ = this.boneRef[i]; if (br_ >= 0 && !dead[br_]) this._snapBone(br_, nx, ny, nz); }
             // sharp weapons (blades, saws, spikes) also cut with their sliding edge, not only by ramming
@@ -5481,7 +5483,7 @@ TYPES.saw = {
     view.rim = mkMesh(new THREE.TorusGeometry(1, 0.03, 10, 96), stdMat('#121418', 0.4, 0.3)); view.rim.rotation.y = Math.PI / 2;
     view.mover.add(view.disc, view.rim, view.discCol);
     view.wMat = stdMat('#6b6e74', 0.85, 0);
-    view.wall = mkMesh(GEO.box, view.wMat); colliderOf(view.wall, 'box', 'wall');
+    view.wall = mkMesh(GEO.box, view.wMat); colliderOf(view.wall, 'box', 'wall', null, { blunt: true });
     view.root.add(view.wall);
     view.pick = [view.disc, view.wall];
   },
@@ -5637,7 +5639,7 @@ TYPES.guillotine = {
   build(view) {
     view.bMat = stdMat('#d7dbe3', 0.15, 0.95); view.fMat = stdMat('#5a3e2b', 0.75, 0);
     view.blade = mkMesh(GEO.box, view.bMat); colliderOf(view.blade, 'box', 'blade');
-    view.posts = [0, 1].map(k => colliderOf(mkMesh(GEO.box, view.fMat), 'box', 'post' + k));
+    view.posts = [0, 1].map(k => colliderOf(mkMesh(GEO.box, view.fMat), 'box', 'post' + k, null, { blunt: true }));
     view.beam = mkMesh(GEO.box, view.fMat);
     view.root.add(view.blade, ...view.posts, view.beam); view.pick = [view.blade, ...view.posts, view.beam];
   },
@@ -5668,7 +5670,7 @@ TYPES.spikes = {
   ] }, { id: 'material', title: 'Colors', fields: [F('color', 'Spikes', 'color'), F('baseColor', 'Base', 'color')] }, G_VIS],
   build(view) {
     view.sMat = stdMat('#b9bec8', 0.2, 0.9); view.bMat = stdMat('#3a3d44', 0.6, 0.2);
-    view.base = mkMesh(GEO.box, view.bMat); colliderOf(view.base, 'box', 'base');
+    view.base = mkMesh(GEO.box, view.bMat); colliderOf(view.base, 'box', 'base', null, { blunt: true });
     view.root.add(view.base); view.spikes = []; view.pick = [view.base];
   },
   apply(view, P) {
@@ -7994,7 +7996,7 @@ function extractColliders() {
       }
       let spin = null;
       if (c.spinLocal) { _w.set(c.spinLocal[0], c.spinLocal[1], c.spinLocal[2]).applyQuaternion(_q); spin = [_w.x, _w.y, _w.z]; }
-      const shatterMul = (TYPES[o.type].cat === 'weapon' || P.power != null) ? 1 / Math.max(0.05, P.power || 1) : 1;
+      const shatterMul = c.blunt ? 1 : (TYPES[o.type].cat === 'weapon' || P.power != null) ? 1 / Math.max(0.05, P.power || 1) : 1; // frames, walls and base plates of a sharp weapon are blunt: lying on them must not slice the body
       out.push({ key: o.id + ':' + c.key, shape: c.shape, dims, p: [_p.x, _p.y, _p.z], q: [_q.x, _q.y, _q.z, _q.w], bound, friction: c.friction != null ? c.friction : 0.5, spin, shatterMul });
     };
     v.root.traverse(visit);
