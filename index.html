@@ -86,6 +86,8 @@ button, input, select { font: inherit; color: inherit; }
 .vp-btn svg { width: 14px; height: 14px; }
 .vp-btn:hover { color: var(--fg); background: var(--bg3); }
 .vp-btn.on { background: var(--accent-dim); color: #fff; }
+.vp-btn.vp-caret { padding: 4px 3px; margin-left: -4px; }
+.vp-btn.vp-caret svg { width: 12px; height: 12px; }
 .vp-spacer { flex: 1; }
 #viewport #navgizmo { position: absolute; right: 10px; top: 48px; width: 86px; height: 86px; pointer-events: auto; cursor: pointer; }
 #navgizmo:hover { background: rgba(26,26,31,.25); border-radius: 50%; }
@@ -971,7 +973,7 @@ root.SB_MHBODY = M; if (typeof module !== "undefined" && module.exports) module.
     organs.push({ t: T.lung, set: SmoothSet([ellU([0.068, 1.33, -0.015], [0.058, 0.1, 0.062]), ellU([-0.068, 1.33, -0.015], [0.058, 0.1, 0.062])]) });
     organs.push({ t: T.liver, set: SmoothSet([ellU([-0.045, 1.175, 0.012], [0.09, 0.045, 0.062], rz(12 * D))]) });
     organs.push({ t: T.stomach, set: SmoothSet([ellU([0.06, 1.17, 0.025], [0.05, 0.042, 0.042], rz(-30 * D))]) });
-    organs.push({ t: T.kidney, set: SmoothSet([ellU([0.064, 1.1, -0.048], [0.026, 0.045, 0.024]), ellU([-0.064, 1.1, -0.048], [0.026, 0.045, 0.024])]) });
+    organs.push({ t: T.kidney, set: SmoothSet([ellU([0.058, 1.1, -0.016], [0.025, 0.046, 0.021]), ellU([-0.058, 1.1, -0.016], [0.025, 0.046, 0.021])]) });
     organs.push({ t: T.intestine, set: SmoothSet([Ellipsoid([0, 1.035, 0.018], [0.1 * fm, 0.07, 0.06 * fm])]) });
     organs.push({ t: T.bladder, set: SmoothSet([Ellipsoid([0, 0.925, 0.04], [0.03, 0.028, 0.028])]) });
     const sc = (p) => scl(p, H);
@@ -1244,7 +1246,7 @@ root.SB_MHBODY = M; if (typeof module !== "undefined" && module.exports) module.
     organs.push({ t: T.lung, set: SmoothSet([ellU([0.068, 1.33, -0.015], [0.058, 0.1, 0.062]), ellU([-0.068, 1.33, -0.015], [0.058, 0.1, 0.062])]) });
     organs.push({ t: T.liver, set: SmoothSet([ellU([-0.045, 1.175, 0.012], [0.09, 0.045, 0.062], rz(12 * D))]) });
     organs.push({ t: T.stomach, set: SmoothSet([ellU([0.06, 1.17, 0.025], [0.05, 0.042, 0.042], rz(-30 * D))]) });
-    organs.push({ t: T.kidney, set: SmoothSet([ellU([0.064, 1.1, -0.048], [0.026, 0.045, 0.024]), ellU([-0.064, 1.1, -0.048], [0.026, 0.045, 0.024])]) });
+    organs.push({ t: T.kidney, set: SmoothSet([ellU([0.058, 1.1, -0.016], [0.025, 0.046, 0.021]), ellU([-0.058, 1.1, -0.016], [0.025, 0.046, 0.021])]) });
     organs.push({ t: T.intestine, set: SmoothSet([Ellipsoid([0, 1.035, 0.018], [0.11 * fm, 0.075, 0.064 * fm])]) });
     organs.push({ t: T.bladder, set: SmoothSet([Ellipsoid([0, 0.925, 0.04], [0.032, 0.03, 0.03])]) });
 
@@ -1555,7 +1557,9 @@ root.SB_MHBODY = M; if (typeof module !== "undefined" && module.exports) module.
         else if (evalSet(shape.bone, x, y, z) < 0 && depth > shape.skinT * 0.5) t = T.bone;
         else {
           t = -1;
-          for (const o of shape.organs) if (evalSet(o.set, x, y, z) < 0) { t = o.t; break; }
+          // organs stay behind the skin, fat and a muscle wall: an organ ellipsoid that reaches the surface (kidneys at a
+          // slim back) would otherwise show through as a patch of organ molecules
+          if (depth > shape.skinT + shape.fatT + 0.5 * s) for (const o of shape.organs) if (evalSet(o.set, x, y, z) < 0) { t = o.t; break; }
           if (t < 0) t = depth < shape.skinT ? T.skin : (depth < shape.skinT + shape.fatT ? T.fat : T.muscle);
         }
         // nearest segment (finger bones too); the solver groups molecules by body segment, a finger by its hand
@@ -3661,8 +3665,13 @@ fn candOk(i: u32) -> bool {
     for (const P of (inp.projectiles || [])) {
       if (this.ballKey.has(P.key)) continue;
       const B = { key: P.key, x: P.p.slice(), xp: P.p.slice(), v: P.v.slice(), r: P.r, m: Math.max(0.05, P.m), mu: P.friction != null ? P.friction : 0.5,
-        shat: P.shatterMul != null ? P.shatterMul : 1, rest: P.restitution != null ? P.restitution : 0.3, q: [0, 0, 0, 1], floor: false, vyPre: 0 };
+        shat: P.shatterMul != null ? P.shatterMul : 1, rest: P.restitution != null ? P.restitution : 0.3, q: [0, 0, 0, 1], floor: false, vyPre: 0, gk: P.noGravity ? 0 : 1 };
       this.ballKey.set(P.key, B); this.balls.push(B);
+    }
+    // balls whose lifetime ran out (emitters): removed for good, their key stays so they are never spawned again
+    if (inp.killBalls && inp.killBalls.length && this.balls.length) {
+      const kill = new Set(inp.killBalls);
+      this.balls = this.balls.filter(B => !kill.has(B.key));
     }
     {
       let minSp = 1e9; for (const b of this.bodies) if (!b.asleep) minSp = Math.min(minSp, b.spacing || 0.02);
@@ -4164,7 +4173,7 @@ fn candOk(i: u32) -> bool {
         }
       }
 
-      if (this.balls.length) this._balls(h, ih, gx, gy, gz, floorOn, floorY, floorMu);
+      if (this.balls.length) this._balls(h, ih, gx, gy, gz, floorOn, floorY, floorMu, cA, ctype, cdim, nc, cols);
 
       // molecules stuck to colliders follow the surface until pulled away
       for (let k = 0; k < nbBody; k++) {
@@ -4653,11 +4662,11 @@ fn candOk(i: u32) -> bool {
 
   // loose rigid balls (cannonballs): gravity, two-way contact with molecules (mass weighted, so a light ball is stopped
   // by a body and a heavy one ploughs through), the floor with bounce and rolling, and each other
-  Engine.prototype._balls = function (h, ih, gx, gy, gz, floorOn, floorY, floorMu) {
+  Engine.prototype._balls = function (h, ih, gx, gy, gz, floorOn, floorY, floorMu, cA, ctype, cdim, nc, cols) {
     const x = this.x, xp = this.xp, w = this.w, rad = this.rad, ct = this.ct, nbb = this.nbb, nb0 = this.nb0, shm = this.shm, balls = this.balls, nB = balls.length;
     for (const B of balls) {
       B.xp[0] = B.x[0]; B.xp[1] = B.x[1]; B.xp[2] = B.x[2];
-      B.v[0] += gx * h; B.v[1] += gy * h; B.v[2] += gz * h;
+      const gk = B.gk != null ? B.gk : 1; B.v[0] += gx * h * gk; B.v[1] += gy * h * gk; B.v[2] += gz * h * gk;
       const dmp = Math.max(0, 1 - 0.02 * h); B.v[0] *= dmp; B.v[1] *= dmp; B.v[2] *= dmp;
       B.vyPre = B.v[1];
       B.x[0] += B.v[0] * h; B.x[1] += B.v[1] * h; B.x[2] += B.v[2] * h;
@@ -4706,6 +4715,25 @@ fn candOk(i: u32) -> bool {
       for (let q = 0; q < 3; q++) { const n = q === 0 ? nx : q === 1 ? ny : nz; A.x[q] -= n * pen * ka; A.xp[q] -= n * pen * ka; C.x[q] += n * pen * kc; C.xp[q] += n * pen * kc; }
       pairs.push(A, C, nx, ny, nz);
     }
+    // solid props, walls and weapons: balls are pushed out of them and bounce off (emitter objects hit scenery too)
+    for (const B of balls) {
+      B.cn = null;
+      for (let c = 0; c < (nc || 0); c++) {
+        const o = c * 32, C = cols[c];
+        const px = B.x[0] - cA[o + 21], py = B.x[1] - cA[o + 22], pz = B.x[2] - cA[o + 23];
+        const RB = (C.bound || 1) + B.r + 0.05; if (px * px + py * py + pz * pz > RB * RB) continue;
+        const qx = cA[o + 9] * px + cA[o + 12] * py + cA[o + 15] * pz;
+        const qy = cA[o + 10] * px + cA[o + 13] * py + cA[o + 16] * pz;
+        const qz = cA[o + 11] * px + cA[o + 14] * py + cA[o + 17] * pz;
+        sdShape(ctype[c], qx, qy, qz, cdim[3 * c], cdim[3 * c + 1], cdim[3 * c + 2], _o2);
+        const pen = B.r - _o2[0]; if (pen <= 0) continue;
+        const nx = cA[o + 9] * _o2[1] + cA[o + 10] * _o2[2] + cA[o + 11] * _o2[3];
+        const ny = cA[o + 12] * _o2[1] + cA[o + 13] * _o2[2] + cA[o + 14] * _o2[3];
+        const nz = cA[o + 15] * _o2[1] + cA[o + 16] * _o2[2] + cA[o + 17] * _o2[3];
+        B.x[0] += nx * pen; B.x[1] += ny * pen; B.x[2] += nz * pen;
+        if (!B.cn) { const vn = (B.x[0] - B.xp[0]) * nx + (B.x[1] - B.xp[1]) * ny + (B.x[2] - B.xp[2]) * nz; B.cn = [nx, ny, nz, B.v[0] * nx + B.v[1] * ny + B.v[2] * nz, vn]; }
+      }
+    }
     for (const B of balls) {
       if (floorOn && B.x[1] < floorY + B.r) { B.x[1] = floorY + B.r; B.floor = true; }
       let vx = (B.x[0] - B.xp[0]) * ih, vy = (B.x[1] - B.xp[1]) * ih, vz = (B.x[2] - B.xp[2]) * ih;
@@ -4728,6 +4756,12 @@ fn candOk(i: u32) -> bool {
           rn = rx * nx + ry * ny + rz * nz; const kf = Math.min(1, 40 * h);
           rx -= (rx - nx * rn) * kf; ry -= (ry - ny * rn) * kf; rz -= (rz - nz * rn) * kf;
           vx = fv[0] + rx; vy = fv[1] + ry; vz = fv[2] + rz; } }
+      if (B.cn) { // bounce off a prop: the speed into its surface comes back scaled by the bounciness, sliding loses a little
+        const [nx, ny, nz, vin] = B.cn, vn = vx * nx + vy * ny + vz * nz;
+        if (vin < -0.5) { const add = -vin * B.rest - vn; vx += nx * add; vy += ny * add; vz += nz * add; }
+        const kf = Math.max(0, 1 - B.mu * 6 * h); const vn2 = vx * nx + vy * ny + vz * nz;
+        vx = nx * vn2 + (vx - nx * vn2) * kf; vy = ny * vn2 + (vy - ny * vn2) * kf; vz = nz * vn2 + (vz - nz * vn2) * kf;
+      }
       const sp2 = vx * vx + vy * vy + vz * vz; if (sp2 > MAXV * MAXV) { const f = MAXV / Math.sqrt(sp2); vx *= f; vy *= f; vz *= f; }
       B.v[0] = vx; B.v[1] = vy; B.v[2] = vz;
       if (B.x[1] < -40) { B.x[1] = -40; B.v[0] = B.v[1] = B.v[2] = 0; }
@@ -4998,6 +5032,7 @@ const ICON = {
   blade: S('<path d="M12 2v10"/><path d="M5 12h14l-3 7a8 8 0 0 1-8 0z"/>'),
   guillotine: S('<path d="M5 2v20M19 2v20M5 3h14"/><path d="M7 9h10l-10 4z"/>'),
   spikes: S('<path d="M2 20h20M4 20l2.5-9L9 20M10 20l2.5-12L15 20M16 20l2.5-9L21 20"/>'),
+  emitter: S('<path d="M3 9h5v6H3z"/><path d="M8 10l4-2v8l-4-2"/><circle cx="16" cy="8" r="1.5"/><circle cx="19.5" cy="12" r="1.5"/><circle cx="16" cy="16" r="1.5"/>'),
   bomb: S('<circle cx="11" cy="14" r="6.5"/><path d="M15 9l2-2M17 7c1-1 2.5-1 3 0M19.5 4.5l.7-1.4M21 6.5l1.4-.4"/>'),
   wind: S('<path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8"/>'),
   vortex: S('<path d="M12 12a2 2 0 1 1 2 2c-3 0-5-2-5-4.5S11.5 4 15 5s5 4.5 4 8-5 6.5-9 5.5S3 13.5 4 9.5"/>'),
@@ -5694,6 +5729,160 @@ TYPES.cannon = {
   },
 };
 
+/* ---------- emitter: keeps spawning real physics balls at a rate, speed and spread ----------
+ * Balls leave along the emitter's forward (blue, +Z) axis. Rate and speed can be keyframed: the number of balls
+ * emitted so far is integrated frame by frame (emitTable), so ball k always gets the same launch moment and
+ * random numbers, and re-simulating gives the same result. Lifetime removes balls from the simulation again. */
+function emitRand(o, k, n) { if (o._seed == null) o._seed = [...o.id].reduce((a, c) => Math.imul(a, 31) + c.charCodeAt(0) | 0, 7); return hash01(hash01i(o._seed ^ Math.imul(k + 1, 0x9E3779B1)) ^ Math.imul(n + 1, 0x85EBCA77)); }
+function hash01i(i) { i = i | 0; i = Math.imul(i ^ (i >>> 16), 0x45d9f3b); i = Math.imul(i ^ (i >>> 16), 0x45d9f3b); return i ^ (i >>> 16); }
+function hash01(i) { i = i | 0; i = Math.imul(i ^ (i >>> 16), 0x45d9f3b); i = Math.imul(i ^ (i >>> 16), 0x45d9f3b); i ^= i >>> 16; return (i >>> 0) / 4294967296; }
+function emitTable(o) {
+  const [s, e] = frameRange(), gen = (APP.editGen || 0) + ':' + s + ':' + e + ':' + (TIME.table ? TIME.table.length : 0);
+  if (o._et && o._et.gen === gen) return o._et;
+  const n = e - s + 3, T = new Float64Array(n), C = new Float64Array(n);
+  let c = 0;
+  for (let i = 0; i < n; i++) {
+    const f = s + i, P = evalProps(o, f), t = timeOf(f);
+    if (i > 0) {
+      const on = f > P.start && (P.end < 0 || f <= P.end) && P.visible !== false;
+      if (on) c += Math.max(0, P.rate) * (t - T[i - 1]);
+    }
+    T[i] = t; C[i] = c;
+  }
+  // a ball is emitted when the running count passes a whole number; the first one leaves right at the start frame
+  return (o._et = { gen, s, T, C, cap: () => Math.max(1, evalProps(o, s).limit | 0) });
+}
+// how many balls have left by time t (fractional), and when ball k left
+function emitCount(et, t) {
+  const T = et.T, C = et.C, n = T.length;
+  if (t <= T[0]) return 0;
+  if (t >= T[n - 1]) return C[n - 1];
+  let lo = 0, hi = n - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (T[m] <= t) lo = m; else hi = m; }
+  return C[lo] + (C[hi] - C[lo]) * (t - T[lo]) / Math.max(1e-9, T[hi] - T[lo]);
+}
+function emitTime(et, k) {
+  const T = et.T, C = et.C, n = T.length;
+  if (!(C[n - 1] > k)) return Infinity;
+  let lo = 0, hi = n - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (C[m] <= k) lo = m; else hi = m; }
+  return T[lo] + (T[hi] - T[lo]) * (k - C[lo]) / Math.max(1e-9, C[hi] - C[lo]);
+}
+// index range [k0, k1) of balls emitted in (ta, tb]: ball k leaves when the count reaches k (ball 0 at the first moment it is on)
+function emitRange(et, ta, tb, cap) {
+  const ca = emitCount(et, ta), cb = emitCount(et, tb);
+  const k0 = ca > 0 ? Math.floor(ca) + 1 : 0, k1 = cb > 0 ? Math.floor(cb) + 1 : 0;
+  return [Math.min(k0, cap), Math.min(Math.max(k0, k1), cap)];
+}
+function emitKTime(et, k) { return k === 0 ? emitTime(et, 1e-9) : emitTime(et, k); }
+// launch state of ball k: position, velocity, radius (in the emitter's pose at frame f)
+function emitLaunch(o, view, P, k) {
+  const r = (n) => emitRand(o, k, n);
+  const sp = Math.max(0, P.speed * (1 + (r(1) * 2 - 1) * P.speedVar));
+  const cone = P.spread * DEG * 0.5, ca = Math.cos(cone), cz = 1 - r(2) * (1 - ca), sz = Math.sqrt(Math.max(0, 1 - cz * cz)), ph = r(3) * Math.PI * 2;
+  const dl = new THREE.Vector3(sz * Math.cos(ph), sz * Math.sin(ph), cz);
+  const m = view.root.matrixWorld, dir = dl.transformDirection(m);
+  const ar = Math.sqrt(r(4)) * P.area, aph = r(5) * Math.PI * 2;
+  const pos = new THREE.Vector3(Math.cos(aph) * ar, Math.sin(aph) * ar, 0.3).applyMatrix4(m);
+  const rad = Math.max(0.005, P.size * (1 + (r(6) * 2 - 1) * P.sizeVar));
+  const v = [dir.x * sp + P.velocity[0], dir.y * sp + P.velocity[1], dir.z * sp + P.velocity[2]];
+  return { p: pos, v, r: rad };
+}
+TYPES.emitter = {
+  label: 'Emitter', icon: 'emitter', cat: 'weapon',
+  defaults: () => BASE_T({ position: [-3.2, 1.3, 0], rotation: [0, 90, 0], start: 10, end: -1, rate: 12, speed: 9, speedVar: 0.15, spread: 12, velocity: [0, 0, 0],
+    size: 0.07, sizeVar: 0.25, area: 0.08, gravity: true, life: 0, limit: 300, density: 1100, bounce: 0.45, friction: 0.5, power: 1, color: '#3a3d46', ballColor: '#e0a33a' }),
+  groups: () => [G_TRANSFORM, { id: 'emit', title: 'Emitter', fields: [
+    F('start', 'Start at frame', 'int', { min: 0, max: 100000, step: 1 }),
+    F('end', 'Stop at frame', 'int', { min: -1, max: 100000, step: 1, help: '-1 keeps emitting until the end (or until the object limit).' }),
+    F('rate', 'Objects per second', 'num', { min: 0, max: 240, step: 0.5, help: 'Keyframe it to make bursts or ramp the stream up and down.' }),
+    F('limit', 'Object limit', 'int', { min: 1, max: 2000, step: 1, noanim: true, help: 'Most objects this emitter ever releases. Lots of objects slow the simulation down.' }),
+    F('life', 'Lifetime', 'num', { min: 0, max: 600, step: 0.1, unit: 's', help: 'Objects disappear this long after leaving. 0 keeps them forever.' }),
+  ] }, { id: 'launch', title: 'Velocity', fields: [
+    F('speed', 'Speed', 'num', { min: 0, max: 200, step: 0.1, unit: 'm/s', help: 'Launch speed along the blue arrow.' }),
+    F('speedVar', 'Speed randomness', 'num', { min: 0, max: 1, step: 0.01, help: '0.2 gives each object a speed up to 20% faster or slower.' }),
+    F('spread', 'Spread angle', 'num', { min: 0, max: 180, step: 0.5, unit: '°', help: 'Width of the cone the objects fly out in. 0 is a straight line, 180 a half sphere.' }),
+    F('velocity', 'Added velocity', 'vec3', { step: 0.1, unit: 'm/s', help: 'Extra velocity in world directions added to every object, for example sideways drift.' }),
+    F('area', 'Nozzle radius', 'num', { min: 0, max: 5, step: 0.01, unit: 'm', help: 'Objects start anywhere on a disc this big.' }),
+    F('gravity', 'Objects fall', 'bool', { noanim: true }),
+  ] }, { id: 'weapon', title: 'Objects', fields: [
+    F('size', 'Radius', 'num', { min: 0.01, max: 1.5, step: 0.005, unit: 'm' }),
+    F('sizeVar', 'Size randomness', 'num', { min: 0, max: 0.9, step: 0.01 }),
+    F('density', 'Density', 'num', { min: 50, max: 12000, step: 50, unit: 'kg/m³', help: 'Rubber ~1100, stone ~2500, steel 7800.' }),
+    F('bounce', 'Bounciness', 'num', { min: 0, max: 0.95, step: 0.05 }),
+    F('friction', 'Friction', 'num', { min: 0, max: 1.5, step: 0.05 }),
+    F('power', 'Shatter power', 'num', { min: 0.1, max: 20, step: 0.1, help: 'How easily the objects tear flesh when they hit.' }),
+  ] }, { id: 'material', title: 'Colors', fields: [F('color', 'Emitter', 'color'), F('ballColor', 'Objects', 'color')] }, G_VIS],
+  build(view) {
+    view.cMat = stdMat('#3a3d46', 0.4, 0.6); view.ballMat = stdMat('#e0a33a', 0.45, 0.1);
+    view.body = mkMesh(GEO.cylinder, view.cMat); view.body.rotation.x = Math.PI / 2; view.body.scale.set(0.34, 0.36, 0.34); view.body.position.z = -0.05;
+    view.nozzle = mkMesh(GEO.cone, view.cMat); view.nozzle.rotation.x = -Math.PI / 2; view.nozzle.scale.set(0.3, 0.2, 0.3); view.nozzle.position.z = 0.2;
+    view.arrow = arrowGroup('#4a8cff'); view.arrow.rotation.x = Math.PI / 2; view.arrow.scale.setScalar(0.55);
+    view.root.add(view.body, view.nozzle, view.arrow); view.pick = [view.body, view.nozzle];
+    view.inst = null; view.cap = 0;
+    view.ballGroup = new THREE.Group(); view.world.add(view.ballGroup);
+  },
+  dispose(view) { view.ballGroup.removeFromParent(); if (view.inst) view.inst.dispose(); },
+  // balls leaving during this frame, handed to the physics engine
+  projectiles(view, P, ctx, prev, o) {
+    const et = emitTable(o), cap = et.cap();
+    const [k0, k1] = emitRange(et, prev.t, ctx.t, cap); if (k1 <= k0) return [];
+    view.root.updateMatrixWorld(true);
+    const out = [], g = P.gravity ? ctx.g : 0;
+    for (let k = k0; k < k1; k++) {
+      const tk = emitKTime(et, k), tau = Math.max(0, ctx.t - tk), L = emitLaunch(o, view, P, k);
+      if (P.life > 0 && tau >= P.life) continue;
+      out.push({ key: o.id + ':e' + k, r: L.r, m: 4.18879 * L.r * L.r * L.r * (P.density || 1100), friction: P.friction, restitution: P.bounce, shatterMul: 1 / Math.max(0.05, P.power || 1),
+        noGravity: !P.gravity,
+        p: [L.p.x + L.v[0] * tau, L.p.y + L.v[1] * tau + 0.5 * g * tau * tau, L.p.z + L.v[2] * tau], v: [L.v[0], L.v[1] + g * tau, L.v[2]] });
+    }
+    return out;
+  },
+  // balls whose lifetime ends during this frame
+  kills(view, P, ctx, prev, o) {
+    if (!(P.life > 0)) return [];
+    const et = emitTable(o), cap = et.cap();
+    const [k0, k1] = emitRange(et, prev.t - P.life, ctx.t - P.life, cap), out = [];
+    for (let k = k0; k < k1; k++) out.push(o.id + ':e' + k);
+    return out;
+  },
+  apply(view, P, ctx) {
+    applyTransform(view, P, true);
+    view.cMat.color.set(P.color); view.ballMat.color.set(P.ballColor);
+    view.arrow.visible = view.editor;
+    view.root.updateMatrixWorld(true);
+    const o = view.obj, et = emitTable(o), cap = et.cap();
+    // balls alive now: emitted before t and (with a lifetime) not expired yet
+    const [, kEnd] = emitRange(et, -1e9, ctx.t, cap);
+    const kStart = P.life > 0 ? emitRange(et, -1e9, ctx.t - P.life, cap)[1] : 0;
+    const n = Math.max(0, kEnd - kStart);
+    if (!view.inst || view.cap < n) {
+      const c = Math.max(32, Math.min(2000, 1 << Math.ceil(Math.log2(Math.max(1, n)))));
+      if (view.inst) { view.ballGroup.remove(view.inst); view.inst.dispose(); }
+      view.inst = new THREE.InstancedMesh(GEO.sphere, view.ballMat, c); view.inst.castShadow = view.inst.receiveShadow = true;
+      view.inst.frustumCulled = false; view.cap = c; view.ballGroup.add(view.inst);
+    }
+    const M = _emM, Q = _emQ, S3 = _emS, Pp = _emP;
+    let i = 0;
+    const g = P.gravity ? ctx.g : 0, floor = APP.scene.world.props.floor;
+    for (let k = kStart; k < kEnd && i < view.cap; k++) {
+      const L = emitLaunch(o, view, P, k);
+      const d = ctx.dyn && ctx.dyn.get(o.id + ':e' + k);
+      if (d) { Pp.set(d[0], d[1], d[2]); Q.set(d[3], d[4], d[5], d[6]); }
+      else if (ctx.dyn) continue; // simulated frame without this ball: it is gone
+      else {
+        // not simulated yet: show the free flight
+        const tau = ctx.t - emitKTime(et, k); if (!(tau >= 0)) continue;
+        Pp.set(L.p.x + L.v[0] * tau, L.p.y + L.v[1] * tau + 0.5 * g * tau * tau, L.p.z + L.v[2] * tau);
+        if (floor && Pp.y < L.r) Pp.y = L.r;
+        Q.identity();
+      }
+      S3.setScalar(L.r * 2); M.compose(Pp, Q, S3); view.inst.setMatrixAt(i++, M);
+    }
+    view.inst.count = i; view.inst.instanceMatrix.needsUpdate = true;
+    view.inst.visible = P.visible !== false;
+  },
+};
+const _emM = new THREE.Matrix4(), _emQ = new THREE.Quaternion(), _emS = new THREE.Vector3(), _emP = new THREE.Vector3();
+
 /* ---------- force fields ---------- */
 TYPES.bomb = {
   label: 'Explosive', icon: 'bomb', cat: 'field',
@@ -5720,7 +5909,10 @@ TYPES.bomb = {
     view.cMat.color.set(P.color);
     const tD = ctx.timeOf(P.detonate), dt = ctx.t - tD;
     const boom = dt >= 0;
-    view.body.visible = !boom; view.fuse.visible = !boom;
+    // after it goes off the casing stays as a faint ghost in the editor, so it can still be clicked, moved or deleted
+    view.body.visible = !boom || view.editor; view.fuse.visible = !boom;
+    if (!view.ghostMat) view.ghostMat = new THREE.MeshBasicMaterial({ color: '#ff8a3d', wireframe: true, transparent: true, opacity: 0.45, depthWrite: false });
+    view.body.material = boom ? view.ghostMat : view.cMat; view.body.castShadow = !boom;
     const k = boom ? dt / 0.35 : 1;
     view.flash.visible = boom && k < 1;
     view.ring.visible = view.editor && !boom;
@@ -5790,17 +5982,30 @@ TYPES.singularity = {
 /* ---------- camera ---------- */
 TYPES.camera = {
   label: 'Camera', icon: 'camera', cat: 'camera',
-  defaults: () => ({ position: [5.2, 2.4, 6.4], target: [0, 1.1, 0], fov: 38, focusDist: 0, fstop: 2.8, shotStart: -1, visible: true }),
-  groups: () => [{ id: 'transform', title: 'Camera', fields: [
+  defaults: () => ({ position: [5.2, 2.4, 6.4], target: [0, 1.1, 0], fov: 38, dof: false, focusObj: '', focusDist: 0, blur: 1, fstop: 2.8, shotStart: -1, followObj: '', followMode: 'look', followAim: [0, 0, 0], followKeepY: false, visible: true }),
+  groups: (P) => [{ id: 'transform', title: 'Camera', fields: [
+    F('lookBtn', 'View', 'button', { noanim: true, text: 'Look through this camera', action: (o) => lookThrough(o) }),
     F('position', 'Location', 'vec3', { step: 0.05, unit: 'm' }),
     F('target', 'Looks at', 'vec3', { step: 0.05, unit: 'm' }),
     F('fov', 'Field of view', 'num', { min: 5, max: 140, step: 0.5, unit: '°' }),
-  ] }, { id: 'lens', title: 'Lens (depth of field)', fields: [
-    F('focusDist', 'Focus distance', 'num', { min: 0, max: 200, step: 0.05, unit: 'm', help: '0 focuses on the "Looks at" point. Turn on Depth of field in Render effects.' }),
-    F('fstop', 'Aperture (f-stop)', 'num', { min: 0.7, max: 22, step: 0.1, help: 'Lower numbers blur more outside the focus point.' }),
+  ] }, { id: 'lens', title: 'Depth of field', fields: [
+    F('dof', 'Depth of field', 'bool', { help: 'Blur what is nearer or further than the focus point when looking through this camera, in renders and videos. Can be keyframed to switch on and off.' }),
+    F('focusObj', 'Focus on', 'select', { noanim: true, options: () => [['', 'Focus distance below'], ...allObjs().filter(x => x.type !== 'camera').map(x => [x.id, x.name])], help: 'Keep an object sharp wherever it goes. Pick "Focus distance below" to set the distance by hand.' }),
+    F('focusDist', 'Focus distance', 'num', { min: 0, max: 200, step: 0.05, unit: 'm', help: 'How far from the camera things are sharpest. 0 focuses on the "Looks at" point. Keyframe it to pull focus.' }),
+    F('blur', 'Blur amount', 'num', { min: 0, max: 6, step: 0.05, help: 'How strongly things out of focus are blurred. 0 is no blur, 1 is normal, higher is dreamier. Keyframe it to blur in or out.' }),
+    F('fstop', 'Aperture (f-stop)', 'num', { min: 0.7, max: 22, step: 0.1, help: 'Photography style control of the same blur: lower numbers blur more.' }),
   ] }, { id: 'shot', title: 'Shots', fields: [
     F('shotStart', 'Shot starts at frame', 'int', { min: -1, max: 100000, step: 1, noanim: true, help: 'With several cameras, the view cuts to this camera at this frame and stays on it until the next camera’s shot starts. Renders and videos follow the cuts. -1 leaves this camera out of the shot list.' }),
-    F('makeShot', 'Shot', 'button', { noanim: true, text: 'Cut to this camera here', action: (o) => { pushUndo(); setProp(o, 'shotStart', APP.frame); toast(`${o.name} takes over from frame ${APP.frame}`); } }),
+    F('makeShot', 'Shot', 'button', { noanim: true, text: 'Cut to this camera here', action: (o) => { pushUndo(); setProp(o, 'shotStart', APP.frame); APP.scene.world.props.activeCam = ''; toast(`${o.name} takes over from frame ${APP.frame}`); } }),
+  ] }, { id: 'follow', title: 'Follow an object', fields: [
+    F('followObj', 'Follow', 'select', { noanim: true, options: () => followOptions(activeObj()), help: 'Anchor this camera to an object so it keeps the object in the shot while it moves, falls or flies apart.',
+      beforeSet: (o) => camState(o, evalProps(o, APP.frame)), onSet: (o, v, pre) => rebaseFollow(o, pre) }),
+    ...(P && P.followObj ? [
+      F('followMode', 'How', 'select', { noanim: true, options: [['look', 'Stay put and turn to watch it'], ['move', 'Move with it, keep the same angle'], ['chase', 'Move with it and keep it centred']],
+        help: 'Stay put: the camera keeps its place and only turns. Move with it: the camera travels along as if mounted to the object.', beforeSet: (o) => camState(o, evalProps(o, APP.frame)), onSet: (o, v, pre) => rebaseFollow(o, pre) }),
+      ...(P.followMode !== 'move' ? [F('followAim', 'Aim offset', 'vec3', { step: 0.05, unit: 'm', help: 'Moves the aim point away from the object’s centre, for example 0.5 m up to frame the head.' })] : []),
+      ...(P.followMode !== 'look' ? [F('followKeepY', 'Keep its height', 'bool', { noanim: true, help: 'Ignore up and down movement, so the camera does not drop when a body falls.' })] : []),
+    ] : []),
   ] }, G_VIS],
   build(view) {
     const m = new THREE.LineBasicMaterial({ color: '#2a2a33', transparent: true, opacity: 0.85 });
@@ -5811,6 +6016,9 @@ TYPES.camera = {
     view.lines = new THREE.LineSegments(geo, m);
     view.box = new THREE.Mesh(GEO.box, new THREE.MeshBasicMaterial({ color: '#2a2a33' })); view.box.scale.set(0.22, 0.16, 0.26); view.box.position.z = 0.13;
     view.root.add(view.lines, view.box); view.pick = [view.box];
+    // focus point marker: a small ring where the camera is focused, while depth of field is on
+    view.focus = new THREE.Mesh(new THREE.RingGeometry(0.09, 0.11, 40), new THREE.MeshBasicMaterial({ color: '#3fb6a8', transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
+    view.focus.renderOrder = 6; view.root.add(view.focus);
   },
   apply(view, P) {
     view.root.position.set(P.position[0], P.position[1], P.position[2]);
@@ -5818,6 +6026,9 @@ TYPES.camera = {
     // lookAt aims an object's +Z at the target, but the camera model is drawn looking down -Z like a real camera
     view.root.rotateY(Math.PI);
     view.root.visible = view.editor && P.visible;
+    const dofOn = (P.dof || FXS.dof) && view.obj;
+    view.focus.visible = !!dofOn;
+    if (dofOn) view.focus.position.set(0, 0, -camFocusDist(view.obj, P));
   },
 };
 
@@ -6189,15 +6400,30 @@ const POSTFX = {
     r.autoClear = ac;
   },
 };
+// is depth of field on for this scene camera: the camera's own switch (keyframable) or Render effects for every camera
+function dofEnabled(co) {
+  if (!co) return false;
+  const P = co._eval || co.props;
+  return !!(P.dof || FXS.dof) && (P.blur == null || P.blur > 0);
+}
+// distance from the camera to where it is focused: a picked object, a set distance, or the "Looks at" point
+function camFocusDist(co, P) {
+  P = P || camState(co);
+  const fo = P.focusObj ? objById(P.focusObj) : null;
+  if (fo && fo !== co) {
+    const a = followAnchor(fo);
+    if (a) return Math.max(0.1, Math.hypot(a.x - P.position[0], a.y - P.position[1], a.z - P.position[2]));
+  }
+  if (P.focusDist > 0) return P.focusDist;
+  return Math.max(0.1, Math.hypot(P.target[0] - P.position[0], P.target[1] - P.position[1], P.target[2] - P.position[2]));
+}
 // focus distance and blur strength for a camera (scene camera props, or the editor view's orbit target)
 function dofParams(cam, co) {
-  const P = co ? (co._eval || evalProps(co, APP.frame)) : null;
-  let focus = 4;
-  if (P && P.focusDist > 0) focus = P.focusDist;
-  else if (P) focus = Math.hypot(P.target[0] - P.position[0], P.target[1] - P.position[1], P.target[2] - P.position[2]);
-  else focus = cam.position.distanceTo(R.controls.target);
+  const P = co ? camState(co) : null;
+  const focus = P ? camFocusDist(co, P) : cam.position.distanceTo(R.controls.target);
   const fstop = P && P.fstop ? P.fstop : 2.8;
-  return { focus: Math.max(0.1, focus), fstop };
+  const blur = P && P.blur != null ? Math.max(0, P.blur) : 1;
+  return { focus: Math.max(0.1, focus), fstop, blur };
 }
 // the scene at an in-between time t (frames): objects evaluated there, molecules blended between frames
 function setSubframe(t) {
@@ -6220,7 +6446,7 @@ function setSubframe(t) {
 function renderScene(cam, opts = {}) {
   const r = R.renderer;
   const co = opts.sceneCam ? sceneCamObj() : null;
-  const dof = FXS.dof && !!co, mb = FXS.mblur && opts.frame != null && opts.motion !== false;
+  const dof = dofEnabled(co), mb = FXS.mblur && opts.frame != null && opts.motion !== false;
   if (!dof && !mb) { r.render(R.scene, cam); return; }
   POSTFX.init();
   const size = r.getDrawingBufferSize(new THREE.Vector2()), w = Math.max(2, size.x | 0), h = Math.max(2, size.y | 0);
@@ -6234,7 +6460,7 @@ function renderScene(cam, opts = {}) {
       D.near.value = cam.near; D.far.value = cam.far; D.focus.value = dp.focus; D.res.value.set(w, h);
       // blur radius in pixels for something far behind the focus point; scales with output height
       const k = h / 1080;
-      D.aper.value = 26 * k * (2.8 / dp.fstop); D.maxR.value = Math.min(28, 22 * k + 4);
+      D.aper.value = 26 * k * (2.8 / dp.fstop) * dp.blur; D.maxR.value = Math.min(40, (22 * k + 4) * Math.max(1, Math.sqrt(dp.blur)));
       POSTFX.pass(POSTFX.matDof, out, clear);
       return out;
     }
@@ -7076,7 +7302,7 @@ const BLOB = (() => {
    tear limit are dropped, so the shell rips open and the intact pieces fly off as flakes, white outside and
    tinted inside. Normals are rebuilt from the actual surface so shading stays smooth while it deforms. */
 const MOL = {
-  N: 0, bodies: [], style: 'molecular', shading: 'skin', size: 1, CLUMP: 4, TEAR: 1.65,
+  N: 0, bodies: [], style: 'molecular', shading: 'tissue', size: 1, CLUMP: 4, TEAR: 1.65,
   init() {
     this.skinGroup = new THREE.Group(); R.scene.add(this.skinGroup);
     this.sphere = new THREE.IcosahedronGeometry(1, 1);
@@ -7687,6 +7913,7 @@ function restore(json) {
   const d = JSON.parse(json);
   APP.scene = { name: d.name, world: d.world, objects: d.objects, tissues: d.tissues || {}, events: d.events || [], clips: d.clips || {} };
   if (TL.sel) TL.sel.clear();
+  APP.blastSel = null;
   rebuildViews();
   APP.sel = APP.sel.filter(id => objById(id)); APP.active = APP.sel[APP.sel.length - 1] || null;
   rebuildTimeTable(); SIM.invalidate(); UI.refreshAll();
@@ -7724,7 +7951,8 @@ function addObject(type, props, name) {
   return o;
 }
 function deleteSelected() {
-  const ids = APP.sel.slice(); if (!ids.length) return;
+  const ids = APP.sel.slice();
+  if (!ids.length) { if (APP.blastSel != null) deleteBlast(APP.blastSel); return; }
   pushUndo();
   APP.scene.objects = APP.scene.objects.filter(o => !ids.includes(o.id));
   ids.forEach(destroyView);
@@ -7743,7 +7971,20 @@ function duplicateSelected() {
   }
   select(fresh); changed(null); UI.refreshAll();
 }
+// interactive blasts (made with the Blast tool) live in scene.events; each one can be picked and deleted on its own
+function deleteBlast(i) {
+  const evs = APP.scene.events || []; if (!(i >= 0 && i < evs.length)) return;
+  pushUndo();
+  const ev = evs.splice(i, 1)[0]; APP.blastSel = null;
+  SIM.invalidate(); TL.dirty = true; APP.dirtyEval = true; UI.refreshAll();
+  toast(`Deleted the blast at frame ${ev.f}`);
+}
+function selectBlast(i) {
+  APP.sel = []; APP.active = null; APP.blastSel = i;
+  UI.onSelection(); TL.dirty = true;
+}
 function select(ids, additive) {
+  if (ids.length || !additive) APP.blastSel = null;
   if (additive) { for (const id of ids) { const i = APP.sel.indexOf(id); if (i >= 0) APP.sel.splice(i, 1); else APP.sel.push(id); } }
   else APP.sel = ids.slice();
   APP.active = APP.sel.length ? APP.sel[APP.sel.length - 1] : null;
@@ -7824,6 +8065,17 @@ const SIM = {
     APP.dirtyEval = true;
     this.lastChange = performance.now();
     if (UI.timeline) UI.timeline.dirty = true;
+  },
+  // anything to simulate: molecular bodies, or real physics balls from cannons and emitters
+  active() { return this.bodyObjs().length > 0 || allObjs().some(o => (o.type === 'emitter' || (o.type === 'cannon' && o.props.dynamic !== false)) && o.props.visible !== false); },
+  killsFor(f) {
+    const ctx = ctxAt(f), prev = ctxAt(f - 1), out = [];
+    for (const o of allObjs()) {
+      const T = TYPES[o.type]; if (!T.kills) continue;
+      const v = APP.views.get(o.id), P = o._simP || evalProps(o, f); if (!v) continue;
+      out.push(...T.kills(v, P, ctx, prev, o));
+    }
+    return out;
   },
   bodyObjs() { return allObjs().filter(o => (o.type === 'humanoid' || (TYPES[o.type].cat === 'mesh' && o.props.physics === 'molecular'))); },
   shapeDesc(o, P) {
@@ -8089,7 +8341,7 @@ const SIM = {
       });
       const fields = this.fieldsFor(f).concat((APP.scene.events || []).filter(ev => ev.f === f).map(ev => ({ type: 'impulse', p: ev.p, radius: ev.r, strength: ev.s, damage: 0.4, lift: 0.25 })));
       const ts = Math.max(0.001, isAnimated(W, 'timeScale') ? evalChannel(W.anim.timeScale, f) : W.props.timeScale);
-      const input = { dt: ts / fpsOf(), substeps: W.props.substeps | 0, gravity: [0, WP.gravity, 0], floor: { enabled: !!W.props.floor, y: 0, friction: WP.floorFriction }, colliders, fields, bodies, projectiles: this.projectilesFor(f), ppEvery: 2, dvMax: 3, physics: typeof PERF !== 'undefined' ? PERF.physics : 'cpu' };
+      const input = { dt: ts / fpsOf(), substeps: W.props.substeps | 0, gravity: [0, WP.gravity, 0], floor: { enabled: !!W.props.floor, y: 0, friction: WP.floorFriction }, colliders, fields, bodies, projectiles: this.projectilesFor(f), killBalls: this.killsFor(f), ppEvery: 2, dvMax: 3, physics: typeof PERF !== 'undefined' ? PERF.physics : 'cpu' };
       const r = await this.call('step', { input }, []);
       if (token !== this.token) return;
       this.live = r.pos; this.liveSt = r.st;
@@ -8380,7 +8632,7 @@ const ADD_ITEMS = () => {
     mi('cube', 'Ice block', molP('ice', '#cfeefc', [0.7, 0.7, 0.7]), 'Ice block', 'cube'),
     { hdr: 'Other' }, mi('camera'),
     'col',
-    { hdr: 'Weapons' }, mi('hammer'), mi('wreckingball'), mi('blade'), mi('saw'), mi('crusher'), mi('pusher'), mi('spinner'), mi('guillotine'), mi('spikes'), mi('cannon'),
+    { hdr: 'Weapons' }, mi('hammer'), mi('wreckingball'), mi('blade'), mi('saw'), mi('crusher'), mi('pusher'), mi('spinner'), mi('guillotine'), mi('spikes'), mi('cannon'), mi('emitter'),
     { hdr: 'Forces' }, mi('bomb'), mi('wind'), mi('vortex'), mi('singularity'),
   ];
 };
@@ -8438,7 +8690,7 @@ function buildMenus() {
       'sep',
       { label: 'Import Mixamo animation (FBX)…', icon: 'upload', title: 'Plays on the selected humanoids, and is saved so every scene can use it. You can also drop .fbx files onto the window.', action: () => importMixamo() },
       { label: 'Saved animations…', icon: 'film', title: 'Your imported animations: rename, delete, use, or move them to another device as a file.', action: () => openAnimLibrary() },
-      { label: 'Cut to selected camera here', icon: 'camera', disabled: !(activeObj() && activeObj().type === 'camera'), action: () => { const o = activeObj(); pushUndo(); setProp(o, 'shotStart', APP.frame); toast(`${o.name} takes over from frame ${APP.frame}`); } },
+      { label: 'Cut to selected camera here', icon: 'camera', disabled: !(activeObj() && activeObj().type === 'camera'), action: () => { const o = activeObj(); pushUndo(); setProp(o, 'shotStart', APP.frame); APP.scene.world.props.activeCam = ''; toast(`${o.name} takes over from frame ${APP.frame}`); } },
       'sep',
       { hdr: 'Motion presets (at the current frame)' },
       ...MOTIONS.map(m => ({ label: m.name, icon: m.icon, title: m.desc, action: () => applyMotion(m.id), disabled: !m.ok(activeObj()) })),
@@ -8532,11 +8784,13 @@ function buildToolbar() {
   const g3 = el('div', { class: 'vp-group', role: 'group', 'aria-label': 'View' });
   const cam = el('button', { class: 'vp-btn', id: 'vb-cam', title: 'Look through the scene camera (Numpad 0)', html: ICON.camera }, el('span', { class: 'vl' }, 'Camera'));
   cam.onclick = () => toggleCamView();
+  const camMenu = el('button', { class: 'vp-btn vp-caret', id: 'vb-camlist', title: 'Pick which camera to look through (PgUp / PgDn)', 'aria-label': 'Choose camera', html: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>' });
+  camMenu.onclick = () => { const r = camMenu.getBoundingClientRect(); showMenu(cameraMenuItems(), r.left - 120, r.bottom + 4, camMenu); };
   const grid = el('button', { class: 'vp-btn', id: 'vb-grid', title: 'Show grid and helpers (H)', html: ICON.grid });
   grid.onclick = () => { APP.showGrid = !APP.showGrid; updateToolbar(); APP.dirtyEval = true; };
   const clean = el('button', { class: 'vp-btn', id: 'vb-clean', title: 'Clean view: hide every editor helper (Shift+H)', html: ICON.render });
   clean.onclick = () => { APP.renderMode = !APP.renderMode; updateToolbar(); APP.dirtyEval = true; syncGizmo(); };
-  g3.append(cam, grid, clean);
+  g3.append(cam, camMenu, grid, clean);
   vh.append(g1, g2, el('div', { class: 'vp-spacer' }), g3);
 }
 function updateToolbar() {
@@ -8591,7 +8845,7 @@ function syncGizmo() {
   const g = R.gizmo, tgt = R.gizmoTarget;
   if (!gizmoAllowed(o) || (APP.camView && o.type === 'camera')) { if (g.object) g.detach(); return; }
   if (R.gizmoDragging) return;
-  const P = evalProps(o, APP.frame);
+  const P = o.type === 'camera' ? camState(o, evalProps(o, APP.frame)) : evalProps(o, APP.frame);
   tgt.position.set(P.position[0], P.position[1], P.position[2]);
   if (o.type === 'camera') { tgt.up.set(0, 1, 0); tgt.lookAt(P.target[0], P.target[1], P.target[2]); } // +Z aims at the target
   else if (P.rotation) tgt.rotation.set(P.rotation[0] * DEG, P.rotation[1] * DEG, P.rotation[2] * DEG, 'XYZ'); else tgt.rotation.set(0, 0, 0);
@@ -8607,7 +8861,9 @@ function initGizmo() {
     const o = activeObj(); if (!o) return;
     pushUndo(); R.gizmoDragging = true;
     const P = evalProps(o, APP.frame);
-    start = { pos: tgt.position.clone(), tgt: P.target ? P.target.slice() : null, others: selObjs().filter(x => x !== o && x.props.position).map(x => ({ o: x, p: evalProps(x, APP.frame).position.slice() })), P };
+    // a following camera: the gizmo sits where following put it, the stored position is relative to that
+    const fs = o.type === 'camera' ? camState(o, P) : null;
+    start = { fd: fs && fs._fd ? fs._fd.slice() : [0, 0, 0], look: !!(fs && fs._look), pos: tgt.position.clone(), tgt: P.target ? P.target.slice() : null, others: selObjs().filter(x => x !== o && x.props.position).map(x => ({ o: x, p: evalProps(x, APP.frame).position.slice() })), P };
   });
   g.addEventListener('mouseUp', () => {
     R.gizmoDragging = false; start = null;
@@ -8618,17 +8874,20 @@ function initGizmo() {
     const o = activeObj(); if (!o || !start) return;
     const r3 = (v, d = 4) => +v.toFixed(d);
     if (g.mode === 'translate') {
-      const p = [r3(tgt.position.x), r3(tgt.position.y), r3(tgt.position.z)];
+      const fd = start.fd;
+      const p = [r3(tgt.position.x - fd[0]), r3(tgt.position.y - fd[1]), r3(tgt.position.z - fd[2])];
       const cur = evalProps(o, APP.frame).position;
       for (let i = 0; i < 3; i++) if (Math.abs(p[i] - cur[i]) > 1e-6) setProp(o, 'position', p[i], i, { silent: true });
       const d = tgt.position.clone().sub(start.pos);
       // a camera moves with its aim: what it looks at shifts along, so the shot keeps its direction
-      if (o.type === 'camera' && start.tgt) { const ct = evalProps(o, APP.frame).target; for (let i = 0; i < 3; i++) { const v = r3(start.tgt[i] + d.getComponent(i)); if (Math.abs(v - ct[i]) > 1e-6) setProp(o, 'target', v, i, { silent: true }); } }
+      if (o.type === 'camera' && start.tgt && !start.look) { const ct = evalProps(o, APP.frame).target; for (let i = 0; i < 3; i++) { const v = r3(start.tgt[i] + d.getComponent(i)); if (Math.abs(v - ct[i]) > 1e-6) setProp(o, 'target', v, i, { silent: true }); } }
       for (const s of start.others) for (let i = 0; i < 3; i++) setProp(s.o, 'position', r3(s.p[i] + d.getComponent(i)), i, { silent: true });
     } else if (g.mode === 'rotate' && o.type === 'camera') {
       // turn the camera in place: keep the distance to what it looks at, swing the target around
+      // (a camera that follows and watches an object aims at it, so turning does nothing then)
+      if (start.look) return;
       const P = evalProps(o, APP.frame), dist = Math.max(0.05, Math.hypot(P.target[0] - P.position[0], P.target[1] - P.position[1], P.target[2] - P.position[2]));
-      const f = new THREE.Vector3(0, 0, 1).applyQuaternion(tgt.quaternion).multiplyScalar(dist).add(tgt.position);
+      const f = new THREE.Vector3(0, 0, 1).applyQuaternion(tgt.quaternion).multiplyScalar(dist).add(tgt.position).sub(new THREE.Vector3(...start.fd));
       const nt = [r3(f.x), r3(f.y), r3(f.z)];
       for (let i = 0; i < 3; i++) if (Math.abs(nt[i] - P.target[i]) > 1e-6) setProp(o, 'target', nt[i], i, { silent: true });
     } else if (g.mode === 'rotate') {
@@ -8677,12 +8936,29 @@ function buildOutliner() {
         { label: 'Delete', icon: 'trash', sc: 'X', action: deleteSelected },
         'sep',
         { label: 'Frame in view', sc: 'F', action: frameSelected },
+        ...(o.type === 'camera' ? [{ label: 'Look through this camera', icon: 'camera', sc: 'C', action: () => lookThrough(o) }] : []),
         { label: 'Clear animation', action: clearAnimSelected, disabled: !Object.keys(o.anim || {}).length },
       ], e);
     });
     list.append(row);
   }
-  if (!allObjs().length) list.append(el('div', { class: 'p-help' }, 'The scene is empty. Use Add (Shift+A) or pick a demo from Scenes.'));
+  // interactive blasts from the Blast tool: one row each, so any of them can be picked and deleted
+  (APP.scene.events || []).forEach((ev, i) => {
+    const sel = APP.blastSel === i;
+    const row = el('div', { class: 'ol-row ol-blast' + (sel ? ' sel active' : ''), role: 'treeitem', 'aria-selected': String(sel), 'data-blast': i, tabindex: -1 });
+    const del = el('button', { class: 'icon-btn eye', title: 'Delete this blast', 'aria-label': `Delete blast at frame ${ev.f}`, html: ICON.trash });
+    del.onclick = (e) => { e.stopPropagation(); deleteBlast(i); };
+    row.append(el('span', { class: 'ic', html: ICON.blast }), el('span', { class: 'nm', title: 'Made with the Blast tool' }, `Blast · frame ${ev.f}`), del);
+    row.addEventListener('click', () => selectBlast(i));
+    row.addEventListener('dblclick', () => { selectBlast(i); setFrame(ev.f); });
+    row.addEventListener('contextmenu', (e) => { selectBlast(i); menuAt([
+      { label: 'Delete this blast', icon: 'trash', sc: 'X', action: () => deleteBlast(i) },
+      { label: 'Go to its frame', action: () => setFrame(ev.f) },
+      { label: `Delete all blasts (${APP.scene.events.length})`, icon: 'trash', action: clearBlasts },
+    ], e); });
+    list.append(row);
+  });
+  if (!allObjs().length && !(APP.scene.events || []).length) list.append(el('div', { class: 'p-help' }, 'The scene is empty. Use Add (Shift+A) or pick a demo from Scenes.'));
 }
 function updateOutlinerBadges() {
   for (const row of $$('#outliner-list .ol-row')) {
@@ -8855,7 +9131,7 @@ function fieldRow(obj, fd) {
     case 'select': {
       const s = el('select', { class: 'selectf', 'aria-label': fd.label });
       for (const [v, t] of (typeof fd.options === 'function' ? fd.options() : fd.options)) s.append(el('option', { value: v }, t));
-      s.addEventListener('change', () => { pushUndo(); setProp(obj, fd.key, s.value); if (fd.onSet) { fd.onSet(obj, s.value); buildProps(); } });
+      s.addEventListener('change', () => { const pre = fd.beforeSet ? fd.beforeSet(obj) : null; pushUndo(); setProp(obj, fd.key, s.value); if (fd.onSet) { fd.onSet(obj, s.value, pre); buildProps(); } });
       ctl.append(s);
       update = (P) => { if (document.activeElement !== s) s.value = String(P[fd.key]); };
       break;
@@ -8916,6 +9192,7 @@ const TYPE_HELP = {
   guillotine: 'The blade free-falls under gravity at the drop frame.',
   spikes: 'A bed of sharp cones. Drop or throw bodies onto it.',
   cannon: 'Fires a volley of iron balls along its forward (blue) axis.',
+  emitter: 'Keeps launching real physics objects along its blue arrow. Set how many per second, how fast, how wide the spray is and how long they last. Rate and speed can be keyframed.',
   bomb: 'Blasts every molecule in its radius outward at the detonation frame. Molecules in the core are torn loose.',
   wind: 'Constant push along its arrow while active.',
   vortex: 'Swirls molecules around its vertical axis and lifts them.',
@@ -9114,7 +9391,8 @@ function renderPanel(body) {
   const shade = el('div', { class: 'seg' });
   for (const s of SHADINGS) { const b = el('button', { class: 'btn sm' + (MOL.shading === s.id ? ' on' : ''), html: ICON[s.icon] }, s.label); b.onclick = () => { setShading(s.id); buildProps(); }; shade.append(b); }
   body.append(groupEl('r:shade', 'Viewport shading', [shade, el('div', { class: 'p-help', style: { margin: '4px 2px' } }, 'Renders and videos use the same shading as the viewport.')]));
-  const cam = allObjs().find(o => o.type === 'camera');
+  const cam = sceneCamObj(), cams = camList(), shots = camShots(), pin = pinnedCam();
+  const viewFrom = !cam || !OUT.useCam ? 'view' : pin ? pin.id : shots.length > 1 ? 'shots' : cam.id;
   const st = el('button', { class: 'btn primary', html: ICON.image }, 'Render image');
   st.onclick = () => renderStill();
   const vid = el('button', { class: 'btn primary', html: ICON.film }, 'Export video');
@@ -9131,7 +9409,8 @@ function renderPanel(body) {
       const mk = (k, lab, dflt) => { const nf = numberField({ label: lab, step: 1, min: fs, max: fe, int: true, value: OUT[k] >= 0 ? OUT[k] : dflt, onCommit: (v) => { OUT[k] = Math.round(v); saveOut(); } }); nf.set(OUT[k] >= 0 ? OUT[k] : dflt); return nf.el; };
       const reset = el('button', { class: 'btn sm', title: 'Export the whole scene range' }, 'All'); reset.onclick = () => { OUT.trimS = OUT.trimE = -1; saveOut(); buildProps(); };
       return el('div', { class: 'row', title: 'Only export part of the timeline.' }, el('label', null, 'Export frames'), el('div', { class: 'ctl', style: { display: 'flex', gap: '6px', alignItems: 'center' } }, mk('trimS', 'From frame', fs), mk('trimE', 'To frame', fe), reset), el('span')); })(),
-    selRow('View from', cam && OUT.useCam ? 'cam' : 'view', [['cam', cam ? `Scene camera (${cam.name})` : 'Scene camera (none yet)'], ['view', 'Current viewport']], (v) => { OUT.useCam = v === 'cam'; saveOut(); updateCropGuide(); }, 'Press C to look through the scene camera and see its crop frame.'),
+    selRow('View from', viewFrom, [...(shots.length > 1 ? [['shots', 'Shot list (cuts between cameras)']] : []), ...cams.map(o => [o.id, `Camera: ${o.name}`]), ...(cams.length ? [] : [['none', 'Scene camera (none yet)']]), ['view', 'Current viewport']],
+      (v) => { if (v === 'none') return; OUT.useCam = v !== 'view'; if (v === 'shots') setPinnedCam(''); else if (v !== 'view') setPinnedCam(v); saveOut(); updateCropGuide(); if (APP.camView) { R.camSync = null; updateCamLabel(); } buildProps(); }, 'Which camera renders and videos are filmed from. Press C to look through it and see its crop frame.'),
     selRow('Video format', OUT.format, [['mp4', 'MP4 (H.264)'], ['webm', 'WebM (VP9)']], (v) => { OUT.format = v; saveOut(); }, 'MP4 opens in every editor and phone. WebM is smaller at the same quality.'),
     selRow('Video quality', OUT.quality, [['high', 'High'], ['med', 'Balanced'], ['low', 'Small file']], (v) => { OUT.quality = v; saveOut(); }),
     el('div', { class: 'p-help', style: { margin: '4px 2px' } }, 'Videos cover the scene’s frame range at the scene frame rate. Every frame is simulated and rendered one by one, so the file is perfectly smooth even if your computer is slow.'),
@@ -9146,7 +9425,7 @@ function renderPanel(body) {
       ck('Motion blur', 'mblur', 'Fast things smear along their path, like a real camera. Shows in camera view (C) when the view is still, and in every render.'),
       el('div', { class: 'row', title: 'How much of each frame the shutter stays open: 0.5 is a classic film look, 1 smears the most.' }, el('label', null, 'Shutter'), el('div', { class: 'ctl' }, shut.el), el('span')),
       selRow('Blur quality', String(FXS.samples), [['4', 'Fast (4 samples)'], ['8', 'Good (8)'], ['16', 'Best (16)']], (v) => { FXS.samples = +v; FXS.user = true; saveFX(); VFX.valid = false; }, 'More samples give smoother motion blur and take longer to render.'),
-      ck('Depth of field', 'dof', 'Things nearer or further than the camera\'s focus point go soft. The focus point is what the camera looks at, unless the camera has a focus distance set.'),
+      ck('Depth of field (all cameras)', 'dof', 'Things nearer or further than the camera\'s focus point go soft. Each camera can also switch it on by itself, with its own focus distance and blur amount (select the camera, Depth of field section). Those can be keyframed.'),
       el('div', { class: 'p-help', style: { margin: '4px 2px' } }, 'Off on slower machines to keep things smooth. The automatic performance check turns them on when your graphics card is strong enough.'),
     ]));
   }
@@ -9208,7 +9487,7 @@ function initNavGizmo() {
 
 /* ---------- help modals ---------- */
 const SHORTCUTS = [
-  ['View', [['Orbit', 'Left drag'], ['Pan', 'Right drag'], ['Zoom', 'Wheel'], ['Front / right / top', 'Numpad 1 3 7'], ['Opposite side', 'Ctrl + Numpad'], ['Scene camera', 'Numpad 0 or C'], ['Frame selected', 'F'], ['Frame everything', 'Home'], ['Toggle grid', 'H'], ['Clean view', 'Shift H']]],
+  ['View', [['Orbit', 'Left drag'], ['Pan', 'Right drag'], ['Zoom', 'Wheel'], ['Front / right / top', 'Numpad 1 3 7'], ['Opposite side', 'Ctrl + Numpad'], ['Scene camera', 'Numpad 0 or C'], ['Look through selected camera', 'C or Ctrl Numpad 0'], ['Next / previous camera', 'PgDn / PgUp'], ['Frame selected', 'F'], ['Frame everything', 'Home'], ['Toggle grid', 'H'], ['Clean view', 'Shift H']]],
   ['Objects', [['Add menu', 'Shift A'], ['Add humanoid', 'Shift H… menu'], ['Select / add to selection', 'Click / Shift click'], ['Select all / none', 'A / Alt A'], ['Move / rotate / scale', 'G / R / S'], ['Select tool', 'Q'], ['Duplicate', 'Shift D'], ['Delete', 'X or Delete'], ['Snap while dragging', 'Hold Ctrl'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z']]],
   ['Animation', [['Play / pause', 'Space'], ['Back to start', 'Shift ←'], ['Jump to end', 'Shift →'], ['Step one frame', '← / →'], ['Previous / next keyframe', '↓ / ↑'], ['Insert keyframe', 'I'], ['Delete keyframe', 'Alt I'], ['Delete selected keys (timeline)', 'X'], ['Zoom timeline', 'Wheel over timeline'], ['Pan timeline', 'Shift wheel or right drag']]],
   ['Simulation & output', [['Blast tool', 'B'], ['Bigger blast', 'Shift click'], ['Shading: skin / x-ray / tissue / molecules', '1 2 3 4'], ['Save to library', 'Ctrl S'], ['Scene library', 'Ctrl O'], ['Render image', 'F12'], ['Export video', 'Ctrl F12'], ['This list', '?']]],
@@ -9242,7 +9521,8 @@ function showTips() {
     li('Use the Blast tool (B) and click while the simulation plays to blow molecules apart.'),
     li('Switch to X-ray (2) to watch the organs tear inside the body.'),
     li('Give a humanoid an animation under Animation. Mixamo clips: download as FBX from mixamo.com, then Import FBX on any humanoid.'),
-    li('Several cameras: set each camera’s "Shot starts at frame" and renders cut between them.'),
+    li('Several cameras: set each camera’s "Shot starts at frame" and renders cut between them. To look through one camera, select it and press C, or use the arrow next to Camera at the top right.'),
+    li('Anchor a camera to an object under Follow an object in the camera settings: it can stay put and watch, or travel along with it.'),
     li('Motion blur and depth of field are in the Output panel, under Render effects.'),
     li('Ctrl+S saves the scene to your library in this browser. Export a .json file to keep it anywhere.'),
   );
@@ -9285,7 +9565,7 @@ function setFrame(f, opts = {}) {
   f = Math.round(clamp(f, s, e));
   if (f === APP.frame && !opts.force) return;
   APP.frame = f; APP.dirtyEval = true; TL.dirty = true;
-  if (SIM.bodyObjs().length && !opts.noSim) SIM.target = Math.max(SIM.target, f);
+  if (SIM.active() && !opts.noSim) SIM.target = Math.max(SIM.target, f);
   if (!APP.playing) { syncProps(); syncGizmo(); }
   TL.updateFrameField();
 }
@@ -9311,7 +9591,7 @@ function resetSim() {
 }
 function clearCache() { SIM.invalidate(); APP.dirtyEval = true; TL.dirty = true; syncProps(); toast('Simulation cache cleared'); }
 function bakeAll() {
-  if (!SIM.bodyObjs().length) return toast('Nothing to simulate: add a humanoid or a breakable prop');
+  if (!SIM.active()) return toast('Nothing to simulate: add a humanoid or a breakable prop');
   SIM.target = frameRange()[1];
   toast('Simulating every frame in the background…');
 }
@@ -9538,7 +9818,7 @@ TL.draw = function () {
   c.stroke();
   // sim cache bar
   const cc = SIM.cache;
-  if (SIM.bodyObjs().length) {
+  if (SIM.active()) {
     if (cc.end >= cc.start) { c.fillStyle = cc.full ? '#c08a3a' : '#7a5ce0'; c.fillRect(this.xOf(cc.start), this.rulerH + 1, this.xOf(cc.end + 1) - this.xOf(cc.start), this.cacheH - 2); }
     if (SIM.target > cc.end && (SIM.busy || SIM.building || SIM.layoutBusy)) { c.fillStyle = 'rgba(122,92,224,.35)'; c.fillRect(this.xOf(cc.end + 1), this.rulerH + 1, this.xOf(Math.min(SIM.target, e) + 1) - this.xOf(cc.end + 1), this.cacheH - 2); }
   }
@@ -9563,9 +9843,9 @@ TL.draw = function () {
   }
   c.textAlign = 'center';
   // interactive blast markers
-  for (const ev of (APP.scene.events || [])) {
+  for (const [bi, ev] of (APP.scene.events || []).entries()) {
     const x = Math.round(this.xOf(ev.f)) + 0.5; if (x < -6 || x > W + 6) continue;
-    c.fillStyle = '#ff9b42'; c.beginPath(); c.moveTo(x - 4, this.rulerH + this.cacheH); c.lineTo(x + 4, this.rulerH + this.cacheH); c.lineTo(x, this.rulerH + this.cacheH + 6); c.closePath(); c.fill();
+    c.fillStyle = bi === APP.blastSel ? '#ffe08a' : '#ff9b42'; c.beginPath(); c.moveTo(x - 4, this.rulerH + this.cacheH); c.lineTo(x + 4, this.rulerH + this.cacheH); c.lineTo(x, this.rulerH + this.cacheH + 6); c.closePath(); c.fill();
   }
   // playhead
   const px = Math.round(this.xOf(APP.frame)) + 0.5;
@@ -9584,6 +9864,12 @@ TL.tickStep = function () {
 };
 
 /* ---------- interaction ---------- */
+TL.hitBlast = function (x, y) {
+  if (y > this.rulerH + this.cacheH + 10) return -1;
+  let best = -1, bd = 7;
+  (APP.scene.events || []).forEach((ev, i) => { const d = Math.abs(this.xOf(ev.f) - x); if (d < bd) { bd = d; best = i; } });
+  return best;
+};
 TL.hitKey = function (x, y) {
   const i = this.rowAt(y); if (i < 0) return null;
   const r = this.rows[i];
@@ -9743,7 +10029,16 @@ function initTimeline() {
     e.preventDefault();
     const p = pos(e); const h = TL.hitKey(p.x, p.y);
     if (TL.drag && TL.drag.kind === 'pan' && (Math.abs(p.x - TL.drag.x) > 3)) return;
-    if (h) { if (!h.g.keys.every(x => TL.sel.has(x.k))) TL.selectGroup(h.g, false); TL.keyMenu(e); }
+    if (h) { if (!h.g.keys.every(x => TL.sel.has(x.k))) TL.selectGroup(h.g, false); TL.keyMenu(e); return; }
+    // right-click on an orange blast marker (just under the cache bar): delete that blast
+    const bi = TL.hitBlast(p.x, p.y);
+    if (bi >= 0) {
+      selectBlast(bi);
+      menuAt([
+        { label: `Delete blast at frame ${APP.scene.events[bi].f}`, icon: 'trash', sc: 'X', action: () => deleteBlast(bi) },
+        { label: `Delete all blasts (${APP.scene.events.length})`, icon: 'trash', action: clearBlasts },
+      ], e);
+    }
   });
   const wheel = (e) => {
     e.preventDefault();
@@ -9820,7 +10115,7 @@ TL.updateCacheText = function () {
   if (!TLB.cache) return;
   const c = SIM.cache;
   let t = '';
-  if (!SIM.bodyObjs().length) t = 'No molecular bodies';
+  if (!SIM.active()) t = 'No molecular bodies';
   else if (SIM.layoutBusy || SIM.building) t = 'Building bodies…';
   else if (c.end < c.start) t = 'Not simulated yet';
   else t = `Cached ${c.start}–${c.end}${SIM.target > c.end && SIM.busy ? ' · simulating' : ''}`;
@@ -10213,7 +10508,7 @@ const REMOTE = {
   on: false, info: null, viewers: 0, busy: false, last: 0, stateT: 0,
   aspect: 16 / 9, outLong: 1280, camMode: 'scene', cam: null, target: null, canvas: null,
   // the finished simulation as a video the phone plays by itself (smooth, unlike the live JPEG stream)
-  clip: { key: '', id: '', state: 'none', prog: 0 }, clipping: null, movedT: 0, phoneClip: false,
+  clip: { key: '', id: '', state: 'none', prog: 0 }, clipping: null, movedT: 0, phoneClip: false, clipReq: false,
   async init() {
     if (!/^https?:$/.test(location.protocol) || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return;
     try {
@@ -10295,7 +10590,7 @@ const REMOTE = {
     const [s, e] = frameRange();
     const st = { connected: true, name: APP.scene.name, demo: this.currentDemo(), playing: !!APP.playing, frame: APP.frame, start: s, end: e,
       cached: SIM.cache ? SIM.cache.end : -1, shading: MOL.shading, fps: fpsOf(),
-      clip: { id: this.clip.key === this.clipKey() ? this.clip.id : '', state: this.clipping ? 'making' : this.clip.state, prog: this.clip.prog, start: this.clip.start, end: this.clip.end, type: this.clip.type || '' }, camMode: this.camMode, status: ($('#pill-sim') || {}).textContent || '',
+      clip: { id: this.clip.key === this.clipKey() ? this.clip.id : '', state: this.clipping ? 'making' : this.clip.state, prog: this.clip.prog, start: this.clip.start, end: this.clip.end, type: this.clip.type || '' }, smoothReq: this.clipReq, camMode: this.camMode, status: ($('#pill-sim') || {}).textContent || '',
       demos: DEMOS.map(d => ({ id: d.id, name: d.name })), lib: this.libList(), libId: APP.libId || null,
       edit: this.editState() };
     return JSON.stringify(st);
@@ -10304,7 +10599,7 @@ const REMOTE = {
     switch (c.t) {
       case 'size': if (c.w > 0 && c.h > 0) { this.aspect = clamp(c.w / c.h, 0.3, 4); this.outLong = clamp(Math.max(c.w, c.h) * (c.dpr || 1), 480, 1280); } break;
       case 'play': if (!!c.on !== !!APP.playing) togglePlay(); break;
-      case 'toggle': togglePlay(); if (APP.playing && SIM.bodyObjs().length) SIM.target = Math.max(SIM.target, frameRange()[1]); break;
+      case 'toggle': togglePlay(); if (APP.playing && SIM.active()) SIM.target = Math.max(SIM.target, frameRange()[1]); break;
       case 'reset': resetSim(); break;
       case 'frame': { if (APP.playing) togglePlay(); const [s, e] = frameRange(); setFrame(clamp(Math.round(+c.f || 0), s, e)); break; }
       case 'shade': if (['skin', 'xray', 'molecules', 'tissue'].includes(c.mode)) setShading(c.mode); break;
@@ -10313,6 +10608,13 @@ const REMOTE = {
       case 'cam': if (c.mode === 'free') this.freeCam(); else this.camMode = 'scene'; break;
       case 'orbit': case 'zoom': case 'pan': this.move(c); this.movedT = performance.now(); break;
       case 'clipmode': this.phoneClip = !!c.on; break;
+      // the phone's Smooth button: make the clip only when asked, so moving around never starts a render
+      case 'smooth':
+        this.clipReq = !!c.on;
+        if (!c.on && this.clipping) this.clipping.cancel = true;
+        if (c.on && this.clip.state === 'failed') this.clip = { key: '', id: '', state: 'none', prog: 0 };
+        if (c.on) this.movedT = 0;
+        break;
       default: this.applyEdit(c);
     }
     this.pushState();
@@ -10322,7 +10624,7 @@ const REMOTE = {
     if (!this.cam) { this.cam = new THREE.PerspectiveCamera(base.fov, this.aspect, 0.05, 600); this.target = new THREE.Vector3(); }
     this.cam.position.copy(base.position); this.cam.quaternion.copy(base.quaternion); this.cam.fov = base.fov;
     const co = sceneCamObj();
-    if (co) { const P = co._eval || evalProps(co, APP.frame); this.target.set(...P.target); }
+    if (co) { const P = camState(co); this.target.set(...P.target); }
     else this.target.copy(R.controls.target);
     this.camMode = 'free';
   },
@@ -10451,7 +10753,7 @@ const REMOTE = {
   applyEdit(c) {
     const act = () => (APP.active ? objById(APP.active) : null);
     switch (c.t) {
-      case 'edit': this.edit = !!c.on; if (this.edit) { this.phoneClip = false; if (this.clipping) this.clipping.cancel = true; } else setTimeout(() => { this.movedT = performance.now(); }, 50); break;
+      case 'edit': this.edit = !!c.on; if (this.edit) { this.phoneClip = false; this.clipReq = false; if (this.clipping) this.clipping.cancel = true; } else setTimeout(() => { this.movedT = performance.now(); }, 50); break;
       case 'pick': {
         const id = this.pickPhone(c.x, c.y);
         if (id) { select([id], !!c.add); this.propsWorld = false; }
@@ -10560,17 +10862,17 @@ const REMOTE = {
   },
   // once the whole range is simulated, render it from the phone's camera into a video for the phone
   clipTick() {
-    if (!this.on || !this.viewers || this.clipping || APP.recording || !VIDEO.supported || this.edit) return;
+    if (!this.on || !this.viewers || !this.clipReq || this.clipping || APP.recording || !VIDEO.supported || this.edit) return;
     const key = this.clipKey();
-    if (key === this.clip.key && this.clip.state === 'ready') return;
+    if (key === this.clip.key && this.clip.state === 'ready') { this.clipReq = false; return; }
     if (this.clip.state === 'failed' && key === this.clip.key) return;
-    const [, e] = frameRange(), c = SIM.cache, hasBodies = SIM.bodyObjs().length > 0;
+    const [, e] = frameRange(), c = SIM.cache, hasBodies = SIM.active();
     const done = !hasBodies || (SIM.ready && (c.end >= e || c.full) && c.end > c.start);
-    if (!done || performance.now() - this.movedT < 900 || R.gizmoDragging) return;
+    if (!done || performance.now() - this.movedT < 300 || R.gizmoDragging) return;
     this.makeClip(key).catch(err => { console.warn('phone clip failed', err); this.clip = { key, id: '', state: 'failed', prog: 0 }; this.clipping = null; });
   },
   async makeClip(key) {
-    const [s, e0] = frameRange(), c = SIM.cache, hasBodies = SIM.bodyObjs().length > 0;
+    const [s, e0] = frameRange(), c = SIM.cache, hasBodies = SIM.active();
     const e = hasBodies ? Math.min(e0, c.end) : e0, n = e - s + 1;
     if (n < 2) return;
     const fps = fpsOf();
@@ -10619,17 +10921,134 @@ const REMOTE = {
     APP.recording = null; this.clipping = null; setStatusHint(null);
     APP.frame = rec.frame0; APP.dirtyEval = true; TL.dirty = true; TL.updateFrameField();
     if (wasPlaying && !APP.playing) togglePlay();
-    if (rec.cancel) { this.clip = { key: '', id: '', state: 'none', prog: 0 }; this.movedT = performance.now() + 60000; return; }
+    if (rec.cancel) { this.clip = { key: '', id: '', state: 'none', prog: 0 }; this.clipReq = false; return; }
     if (fail || !chunks.length) { this.clip = { key, id: '', state: 'failed', prog: 0 }; return; }
     const track = { w, h, fps, codec: cfg.codec, desc };
     const blob = fmt === 'mp4' ? muxMP4(chunks, track) : muxWebM(chunks, track);
     const id = Math.random().toString(36).slice(2, 10);
     const r = await fetch('/remote/pushclip?id=' + id, { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
     if (!r.ok) throw new Error('upload ' + r.status);
-    this.clip = { key, id, state: 'ready', prog: 1, start: s, end: e, type: blob.type };
+    this.clip = { key, id, state: 'ready', prog: 1, start: s, end: e, type: blob.type }; this.clipReq = false;
     this.pushState();
   },
 };
+
+/* ===================== cameras: active camera, switching, follow an object ===================== */
+// Which camera films a frame: a camera picked with "Look through" (scene world prop activeCam) always wins;
+// with no pick, cameras with a "Shot starts at frame" cut between each other; otherwise the first visible camera.
+function camList() { return allObjs().filter(o => o.type === 'camera'); }
+function camShots() { return camList().filter(o => o.props.shotStart >= 0); }
+function pinnedCam() { const id = APP.scene && APP.scene.world.props.activeCam; return id ? camList().find(o => o.id === id) || null : null; }
+function setPinnedCam(id) {
+  const W = APP.scene.world;
+  if ((W.props.activeCam || '') === (id || '')) return false;
+  pushUndo(); W.props.activeCam = id || '';
+  APP.dirtyEval = true; R.camSync = null; if (UI.timeline) UI.timeline.dirty = true; TL.dirty = true;
+  return true;
+}
+// look through a specific camera (enters camera view if needed) and make it the one renders use
+function lookThrough(o) {
+  if (!o || o.type !== 'camera') return;
+  setPinnedCam(o.id);
+  if (!APP.camView) toggleCamView(); else { R.camSync = null; camViewSync(); updateCamLabel(); }
+  const shots = camShots().length;
+  toast(shots > 1 ? `Looking through ${o.name}. Shot cuts are paused; pick "Follow shots" in the camera menu to use them again.` : `Looking through ${o.name}`);
+  if (typeof buildProps === 'function' && PROPS.tab === 'render') buildProps();
+}
+function followShots() {
+  setPinnedCam('');
+  if (APP.camView) { R.camSync = null; camViewSync(); updateCamLabel(); }
+  toast('Cameras cut by their shot start frames again');
+  if (typeof buildProps === 'function' && PROPS.tab === 'render') buildProps();
+}
+function cycleCam(dir) {
+  const cams = camList(); if (!cams.length) return;
+  const cur = sceneCamObj(), i = Math.max(0, cams.indexOf(cur));
+  lookThrough(cams[(i + dir + cams.length) % cams.length]);
+}
+function updateCamLabel() {
+  const lab = $('.vp-cam-label'); if (!lab) return;
+  const o = sceneCamObj(); const P = o && (o._eval || o.props);
+  const t = o ? `Camera view · ${o.name}` + (P && P.followObj && objById(P.followObj) ? ` · following ${objById(P.followObj).name}` : '') + (!pinnedCam() && camShots().length > 1 ? ' · shots' : '') : 'Camera view';
+  if (lab.textContent !== t) lab.textContent = t;
+}
+function cameraMenuItems() {
+  const cams = camList(), cur = sceneCamObj(), pin = pinnedCam(), shots = camShots();
+  const items = [{ hdr: cams.length ? 'Look through' : 'No cameras yet' }];
+  for (const o of cams) items.push({ label: o.name + (o.props.shotStart >= 0 ? `  (shot from ${o.props.shotStart})` : ''), checked: APP.camView ? o === cur : o === pin, action: () => lookThrough(o) });
+  if (shots.length) items.push('sep', { label: shots.length > 1 ? 'Follow shots (cut between cameras)' : 'Follow shots', checked: !pin, action: () => followShots(), disabled: !pin });
+  items.push('sep', { label: 'Add a camera at this view', icon: 'camera', action: () => { const o = addCameraFromView(); if (APP.camView) lookThrough(o); } });
+  if (APP.camView) items.push({ label: 'Leave camera view', sc: 'Esc', action: () => toggleCamView() });
+  else if (cams.length > 1) items.push({ label: 'Next / previous camera', sc: 'PgDn / PgUp', disabled: true });
+  return items;
+}
+
+/* ---------- follow an object ---------- */
+// The point a camera follows: the centre of mass of a body's molecules where it is simulated (smooth even
+// while it breaks apart, unlike a bounding box), else the middle of the object's shape.
+function followAnchor(o) {
+  const L = SIM.layout && SIM.N && SIM.disp && !SIM.layoutDirty && SIM.layout.find(l => l.obj.id === o.id);
+  if (L) {
+    const d = SIM.disp, st = SIM.dispSt; let x = 0, y = 0, z = 0, n = 0;
+    for (let i = L.start; i < L.start + L.data.count; i++) { if (st && st[i] === 2) continue; x += d[3 * i]; y += d[3 * i + 1]; z += d[3 * i + 2]; n++; }
+    if (n) return new THREE.Vector3(x / n, y / n, z / n);
+  }
+  const b = selectionBox(o); if (b.isEmpty()) return null;
+  return b.getCenter(new THREE.Vector3());
+}
+const CAMF = { key: '', map: new Map() };
+// a camera's position, aim and lens right now, with following applied. _fd is how far following moved it
+// (subtract it when writing an edited position back), _look is set when following decides where it aims.
+function camState(o, P) {
+  P = P || o._eval || evalProps(o, APP.frame);
+  const fo = P.followObj ? objById(P.followObj) : null;
+  if (!fo || fo === o || fo.type === 'camera' || fo.type === 'world') return P;
+  // cached per displayed frame; not while motion blur swaps sub-frames in (it clears _dispKey)
+  const dk = _dispKey, key = dk + '|' + APP.evalStamp + '|' + APP.frame;
+  if (key !== CAMF.key) { CAMF.key = key; CAMF.map.clear(); }
+  let a = dk ? CAMF.map.get(fo.id) : null;
+  if (!a) { a = followAnchor(fo); if (!a) return P; CAMF.map.set(fo.id, a); }
+  const out = Object.assign({}, P), mode = P.followMode || 'look';
+  const aim = Array.isArray(P.followAim) ? P.followAim : [0, 0, 0];
+  let d = [0, 0, 0];
+  if (mode === 'move' || mode === 'chase') {
+    // the reference point is where the object was when the camera was anchored (set now if it never was)
+    if (!Array.isArray(o.props.followRef)) o.props.followRef = [a.x, a.y, a.z].map(v => +v.toFixed(4));
+    const ref = o.props.followRef;
+    d = [a.x - ref[0], P.followKeepY ? 0 : a.y - ref[1], a.z - ref[2]];
+    out.position = [P.position[0] + d[0], P.position[1] + d[1], P.position[2] + d[2]];
+    out.target = [P.target[0] + d[0], P.target[1] + d[1], P.target[2] + d[2]];
+  }
+  if (mode === 'look' || mode === 'chase') { out.target = [a.x + aim[0], a.y + aim[1], a.z + aim[2]]; out._look = true; }
+  out._fd = d;
+  return out;
+}
+// after a change to who or how a camera follows: keep it exactly where it is on screen at this frame
+function rebaseFollow(o, before) {
+  const P = o.props, fo = P.followObj ? objById(P.followObj) : null;
+  if (!fo) delete P.followRef;
+  else { const a = followAnchor(fo); if (!a) return; P.followRef = [a.x, a.y, a.z].map(v => +v.toFixed(4)); }
+  if (before) {
+    const r4 = (v) => +v.toFixed(4), cur = evalProps(o, APP.frame);
+    for (let i = 0; i < 3; i++) {
+      if (Math.abs(before.position[i] - cur.position[i]) > 1e-6) setProp(o, 'position', r4(before.position[i]), i, { silent: true });
+      if (Math.abs(before.target[i] - cur.target[i]) > 1e-6) setProp(o, 'target', r4(before.target[i]), i, { silent: true });
+    }
+  }
+  APP.dirtyEval = true; R.camSync = null;
+}
+function followOptions(self) {
+  return [['', 'Nothing (camera stays put)'], ...allObjs().filter(x => x.type !== 'camera' && (!self || x.id !== self.id)).map(x => [x.id, x.name])];
+}
+// the camera models in the viewport show where following cameras really are (bodies move after evaluation)
+function camFollowVisuals() {
+  for (const o of allObjs()) {
+    if (o.type !== 'camera') continue;
+    const P = o._eval; if (!P || !P.followObj) continue;
+    const v = APP.views.get(o.id); if (!v) continue;
+    TYPES.camera.apply(v, camState(o, P));
+  }
+}
 
 /* ===================== main: scenes in/out, viewport interaction, render loop ===================== */
 Object.assign(APP, { showGrid: true, snap: false, gizmoSpace: 'world', playSpeed: 1, libId: null, waiting: false });
@@ -10697,8 +11116,8 @@ function activateScene(sc, opts = {}) {
   updateToolbar();
 }
 function viewFromSceneCamera(instant) {
-  const cam = allObjs().find(o => o.type === 'camera'); if (!cam) return;
-  const P = evalProps(cam, APP.frame);
+  const cam = sceneCamObj(); if (!cam) return;
+  const P = camState(cam, evalProps(cam, APP.frame));
   // a wider view from a little to the side of the shot, so the set-up and the camera are both visible
   const p = new THREE.Vector3(...P.position), t = new THREE.Vector3(...P.target);
   // portrait viewports (phones) see less sideways, so step further back
@@ -10847,10 +11266,12 @@ function frameSelected(all) {
   if (APP.camView) toggleCamView();
   animateView(c.clone().addScaledVector(dir, dist), c);
 }
-// the camera that films frame f: with shots set up, the camera whose shot started last; otherwise the first visible camera
+// the camera that films frame f: the camera picked with "Look through" if any; with shots set up, the camera
+// whose shot started last; otherwise the first visible camera
 function sceneCamObj(f) {
   const fr = f != null ? f : (APP.evalF != null ? APP.evalF : APP.frame);
-  const cams = allObjs().filter(o => o.type === 'camera');
+  const pin = pinnedCam(); if (pin) return pin;
+  const cams = camList();
   let best = null, bs = -Infinity, first = null;
   for (const o of cams) {
     const s = o.props.shotStart; if (!(s >= 0)) continue;
@@ -10860,6 +11281,9 @@ function sceneCamObj(f) {
   return best || first || cams.find(o => (o._eval || o.props).visible !== false) || cams[0];
 }
 function toggleCamView() {
+  // with a camera selected, C looks through that camera (any camera, not only the active one)
+  const sel = activeObj();
+  if (!APP.camView && sel && sel.type === 'camera' && sel !== sceneCamObj()) { lookThrough(sel); return; }
   if (!APP.camView && !sceneCamObj()) {
     addCameraFromView();
     toast('Added a camera at this view. Press C again to leave camera view.');
@@ -10877,6 +11301,7 @@ function toggleCamView() {
   let fr = $('.vp-cam-frame'), lab = $('.vp-cam-label');
   if (APP.camView) {
     if (!fr) { R.vp.append(el('div', { class: 'vp-cam-frame' }), el('div', { class: 'vp-cam-label' }, 'Camera view')); }
+    updateCamLabel();
   } else { if (fr) fr.remove(); if (lab) lab.remove(); }
   updateCropGuide();
 }
@@ -10886,31 +11311,34 @@ function camViewSync() {
   const o = sceneCamObj(); if (!o) return;
   const c = R.camera, t = R.controls.target, S = R.camSync;
   const moved = S && (c.position.distanceToSquared(S.p) > 1e-10 || t.distanceToSquared(S.t) > 1e-10);
-  if (moved && !APP.playing) {
+  if (moved && !APP.playing && S.id === o.id) {
     const now = performance.now();
     if (!R.camEditT || now - R.camEditT > 700) pushUndo();
     R.camEditT = now;
-    const r4 = (v) => +v.toFixed(4), P = evalProps(o, APP.frame);
+    // a following camera stores its position relative to where following moved it; what it aims at is
+    // decided by following when it watches the object, so only the position is written then
+    const r4 = (v) => +v.toFixed(4), P = evalProps(o, APP.frame), st = camState(o, P), fd = st._fd || [0, 0, 0];
     for (let i = 0; i < 3; i++) {
-      const pv = r4(c.position.getComponent(i)), tv = r4(t.getComponent(i));
+      const pv = r4(c.position.getComponent(i) - fd[i]), tv = r4(t.getComponent(i) - fd[i]);
       if (Math.abs(pv - P.position[i]) > 1e-6) setProp(o, 'position', pv, i, { silent: true });
-      if (Math.abs(tv - P.target[i]) > 1e-6) setProp(o, 'target', tv, i, { silent: true });
+      if (!st._look && Math.abs(tv - P.target[i]) > 1e-6) setProp(o, 'target', tv, i, { silent: true });
     }
     APP.dirtyEval = true; syncProps(); if (UI.timeline) UI.timeline.dirty = true;
     clearTimeout(R.camEditTimer); R.camEditTimer = setTimeout(() => UI.onPropChanged(o, 'position'), 300);
   } else {
-    const P = o._eval || evalProps(o, APP.frame);
+    const P = camState(o);
     c.position.set(P.position[0], P.position[1], P.position[2]); t.set(P.target[0], P.target[1], P.target[2]);
     if (c.fov !== P.fov) { c.fov = P.fov; c.updateProjectionMatrix(); }
     c.up.set(0, 1, 0); c.lookAt(t);
   }
-  R.camSync = { p: c.position.clone(), t: t.clone() };
+  R.camSync = { p: c.position.clone(), t: t.clone(), id: o.id };
+  if (!S || S.id !== o.id) updateCamLabel();
 }
 function camForOutput(aspect, useScene, output) {
   const co = useScene ? sceneCamObj() : null;
   const cam = new THREE.PerspectiveCamera(R.camera.fov, aspect, 0.05, 600);
   if (co) {
-    const P = co._eval || evalProps(co, APP.frame);
+    const P = camState(co);
     cam.fov = P.fov; cam.position.set(...P.position); cam.up.set(0, 1, 0); cam.lookAt(new THREE.Vector3(...P.target));
   } else { cam.position.copy(R.camera.position); cam.quaternion.copy(R.camera.quaternion); }
   if (output) {
@@ -10962,8 +11390,9 @@ function pickRay(ray) {
     const o = v.obj; if (o.type === 'camera' && (APP.camView || APP.renderMode)) continue;
     for (const m of v.pick) if (visibleChain(m) || (o.type === 'camera')) meshes.push(m);
   }
+  if (BLASTMK.group.visible) for (const m of BLASTMK.group.children) meshes.push(m);
   const hits = RAY.intersectObjects(meshes, false).filter(h => visibleChain(h.object));
-  const mh = hits[0] ? { t: hits[0].distance, objId: hits[0].object.userData.objId, point: hits[0].point } : null;
+  const mh = hits[0] ? { t: hits[0].distance, objId: hits[0].object.userData.objId, blast: hits[0].object.userData.blastIdx, point: hits[0].point } : null;
   const ph = pickParticles(ray);
   let best = mh;
   if (ph && (!best || ph.t < best.t)) best = { t: ph.t, objId: ph.objId, point: ray.at(ph.t, new THREE.Vector3()) };
@@ -10980,15 +11409,46 @@ function blastAt(p, radius, strength) {
     if (c.end >= ev.f) SIM.invalidate(); // re-simulate from the start so the blast lands exactly here
   }
   APP.scene.events = APP.scene.events || [];
+  pushUndo(); // Ctrl+Z takes a blast back
   APP.scene.events.push(ev);
+  if (typeof buildOutliner === 'function') buildOutliner();
   SIM.target = Math.max(SIM.target, ev.f + 2);
   if (!APP.playing) togglePlay();
   flashFX(p, radius);
   TL.dirty = true;
 }
+// editor markers for interactive blasts: an orange star where each went off (click to select, X to delete)
+const BLASTMK = { group: null, key: '', geo: null, mat: null, matSel: null, ring: null };
+function syncBlastMarks() {
+  if (!BLASTMK.group) {
+    BLASTMK.group = new THREE.Group(); R.helpers.add(BLASTMK.group);
+    BLASTMK.geo = new THREE.OctahedronGeometry(0.1, 0);
+    BLASTMK.mat = new THREE.MeshBasicMaterial({ color: '#ff9b42', wireframe: true, transparent: true, opacity: 0.85, depthTest: false });
+    BLASTMK.matSel = new THREE.MeshBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.95, depthTest: false });
+    BLASTMK.ring = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.MeshBasicMaterial({ color: '#ff9b42', wireframe: true, transparent: true, opacity: 0.18, depthWrite: false }));
+    BLASTMK.ring.raycast = () => {}; R.helpers.add(BLASTMK.ring);
+  }
+  const evs = APP.scene.events || [];
+  const key = JSON.stringify(evs) + '|' + APP.blastSel;
+  BLASTMK.group.visible = !APP.renderMode && !APP.camView && evs.length > 0;
+  BLASTMK.ring.visible = BLASTMK.group.visible && APP.blastSel != null && !!evs[APP.blastSel];
+  if (key === BLASTMK.key) return;
+  BLASTMK.key = key;
+  if (APP.blastSel != null && !evs[APP.blastSel]) APP.blastSel = null;
+  BLASTMK.group.clear();
+  evs.forEach((ev, i) => {
+    const m = new THREE.Mesh(BLASTMK.geo, i === APP.blastSel ? BLASTMK.matSel : BLASTMK.mat);
+    m.position.set(ev.p[0], ev.p[1], ev.p[2]); m.renderOrder = 7; m.userData.blastIdx = i;
+    m.scale.setScalar(i === APP.blastSel ? 1.6 : 1.2);
+    BLASTMK.group.add(m);
+  });
+  const sel = APP.blastSel != null ? evs[APP.blastSel] : null;
+  BLASTMK.ring.visible = BLASTMK.group.visible && !!sel;
+  if (sel) { BLASTMK.ring.position.set(sel.p[0], sel.p[1], sel.p[2]); BLASTMK.ring.scale.setScalar(sel.r); }
+}
 function clearBlasts() {
   if (!APP.scene.events || !APP.scene.events.length) return toast('No interactive blasts recorded');
-  pushUndo(); const n = APP.scene.events.length; APP.scene.events = []; SIM.invalidate(); toast(`Removed ${n} blast${n > 1 ? 's' : ''}`);
+  pushUndo(); const n = APP.scene.events.length; APP.scene.events = []; APP.blastSel = null; SIM.invalidate(); TL.dirty = true; UI.refreshAll(); toast(`Removed ${n} blast${n > 1 ? 's' : ''}`);
 }
 const FX = [];
 function flashFX(p, radius) {
@@ -11020,7 +11480,8 @@ function initViewportInput() {
       if (p) { if (hit.floor) p.y += 0.3; blastAt(p, e.shiftKey ? 1.7 : 0.85, e.shiftKey ? 24 : 13); }
       return;
     }
-    if (hit && hit.objId) select([hit.objId], e.shiftKey || e.ctrlKey || e.metaKey);
+    if (hit && hit.blast != null) selectBlast(hit.blast);
+    else if (hit && hit.objId) select([hit.objId], e.shiftKey || e.ctrlKey || e.metaKey);
     else if (!e.shiftKey) select([]);
   });
   cv.addEventListener('dblclick', (e) => { if (APP.tool !== 'blast') { const h = pickAt(e); if (h && h.objId) { select([h.objId]); frameSelected(); } } });
@@ -11033,6 +11494,13 @@ function initViewportInput() {
     if (e.button !== 2) return;
     if (!rdown || Math.hypot(e.clientX - rdown.x, e.clientY - rdown.y) > 4) return;
     const h = pickAt(e);
+    if (h && h.blast != null) {
+      const bi = h.blast; selectBlast(bi);
+      return showMenu([
+        { label: `Delete this blast (frame ${(APP.scene.events[bi] || {}).f})`, icon: 'trash', sc: 'X', action: () => deleteBlast(bi) },
+        { label: `Delete all blasts (${APP.scene.events.length})`, icon: 'trash', action: clearBlasts },
+      ], e.clientX, e.clientY);
+    }
     if (h && h.objId && !APP.sel.includes(h.objId)) select([h.objId]);
     const has = selObjs().length;
     showMenu([
@@ -11068,6 +11536,7 @@ function onKey(e) {
     if (k === 'o') { handled(); openLibrary(); return; }
     if (k === 'n') { handled(); newSceneCmd(); return; }
     if (k === 'F12') { handled(); recordVideo(); return; }
+    if (code === 'Numpad0') { handled(); const o = activeObj(); if (o && o.type === 'camera') lookThrough(o); else toast('Select a camera first'); return; }
     if (code && code.startsWith('Numpad') && '137'.includes(code.slice(6))) { handled(); setView({ 1: 'back', 3: 'left', 7: 'bottom' }[code.slice(6)]); return; }
     return;
   }
@@ -11089,6 +11558,8 @@ function onKey(e) {
     case 'Escape': if (APP.tool === 'blast') { handled(); setTool('select'); } else if (APP.camView) { handled(); toggleCamView(); } return;
     case '?': handled(); showShortcuts(); return;
     case 'Home': handled(); frameSelected(true); return;
+    case 'PageDown': if (camList().length) { handled(); cycleCam(1); } return;
+    case 'PageUp': if (camList().length) { handled(); cycleCam(-1); } return;
     case 'Delete': case 'Backspace': handled(); deleteSelected(); return;
   }
   const lk = k.length === 1 ? k.toLowerCase() : k;
@@ -11192,12 +11663,12 @@ async function recordVideo() {
   const [s, e] = exportRange();
   APP.recording = { phase: 'sim', s, e, mime, chunks: [], frame0: APP.frame };
   setStatusHint('Preparing video… press Esc to cancel');
-  if (SIM.bodyObjs().length) SIM.target = Math.max(SIM.target, e);
+  if (SIM.active()) SIM.target = Math.max(SIM.target, e);
 }
 function recTick(now) {
   const rec = APP.recording; if (!rec) return;
   if (rec.phase === 'sim') {
-    const hasBodies = SIM.bodyObjs().length > 0;
+    const hasBodies = SIM.active();
     const c = SIM.cache;
     const done = !hasBodies || (SIM.ready && (c.end >= rec.e || c.full));
     const prog = hasBodies && SIM.ready ? (c.end - rec.s) / Math.max(1, rec.e - rec.s) : 0;
@@ -11308,10 +11779,9 @@ function frameBody(now) {
     if (k >= 1) APP.viewAnim = null;
   }
   R.controls.update();
-  if (APP.camView) camViewSync();
   // playback
   const [s, e] = frameRange();
-  const hasBodies = SIM.bodyObjs().length > 0;
+  const hasBodies = SIM.active();
   if (APP.recording && (APP.recording.phase === 'enc' || APP.recording.phase === 'prep')) {
     // the offline encoder drives rendering itself
     if (now - LOOP.statsT > 250) { LOOP.statsT = now; updateStats(); }
@@ -11356,6 +11826,9 @@ function frameBody(now) {
     if (!APP.playing && !APP.recording && PROPS.lastSyncFrame !== APP.frame) { PROPS.lastSyncFrame = APP.frame; syncProps(); }
   }
   updateBodies();
+  camFollowVisuals();
+  // after the bodies so a camera following one sees where it is this frame
+  if (APP.camView) camViewSync();
   updateFX(now);
   // helpers
   const out = !!APP.recording && APP.recording.phase !== 'sim';
@@ -11363,6 +11836,7 @@ function frameBody(now) {
   if (R.gizmo.object && (APP.playing || out)) R.gizmo.detach();
   R.gizmoHelper.visible = !out && !!R.gizmo.object;
   updateSelectionBoxes();
+  syncBlastMarks();
   // render
   R.helpers.visible = !out;
   const cam = out ? camForOutput(R.renderer.domElement.width / R.renderer.domElement.height, OUT.useCam, true) : viewCam();
@@ -11382,9 +11856,10 @@ function viewportRender(cam, out) {
   // graphics card that also runs the GPU physics that slowed the simulation itself down a lot
   const simming = SIM.target >= 0 && SIM.cache.end < SIM.target;
   const wantMB = FXS.mblur && scene && !APP.playing && !APP.recording && !R.gizmoDragging && !simming;
-  if (!(FXS.dof && scene) && !wantMB) { VFX.valid = false; R.renderer.render(R.scene, cam); return; }
+  const dofNow = !!scene && dofEnabled(sceneCamObj());
+  if (!dofNow && !wantMB) { VFX.valid = false; R.renderer.render(R.scene, cam); return; }
   const e = cam.matrixWorld.elements;
-  const sig = (FXS.dof ? 'd' : '') + (wantMB ? 'm' + FXS.samples + FXS.shutter : '') + '|' + APP.frame + '|' + APP.evalStamp + '|' + _dispKey + '|' + (SIM.cache.end > APP.frame ? 1 : 0) + '|' + R.renderer.domElement.width + 'x' + R.renderer.domElement.height + '|' + e[12].toFixed(4) + e[13].toFixed(4) + e[14].toFixed(4) + e[8].toFixed(4) + e[9].toFixed(4) + e[10].toFixed(4) + '|' + cam.fov;
+  const sig = (dofNow ? 'd' : '') + (wantMB ? 'm' + FXS.samples + FXS.shutter : '') + '|' + APP.frame + '|' + APP.evalStamp + '|' + _dispKey + '|' + (SIM.cache.end > APP.frame ? 1 : 0) + '|' + R.renderer.domElement.width + 'x' + R.renderer.domElement.height + '|' + e[12].toFixed(4) + e[13].toFixed(4) + e[14].toFixed(4) + e[8].toFixed(4) + e[9].toFixed(4) + e[10].toFixed(4) + '|' + cam.fov;
   const now = performance.now();
   if (sig !== VFX.sig) { VFX.sig = sig; VFX.still = now; VFX.valid = false; }
   if (wantMB && VFX.valid && POSTFX.acc) { POSTFX.matCopy.uniforms.tColor.value = POSTFX.acc.texture; POSTFX.pass(POSTFX.matCopy, null, false); return; }
@@ -11398,7 +11873,7 @@ function viewportRender(cam, out) {
 function updateStats() {
   $('#pill-fps').textContent = `${Math.round(LOOP.fps)} fps`;
   const pill = $('#pill-sim');
-  const c = SIM.cache, hasBodies = SIM.bodyObjs().length > 0;
+  const c = SIM.cache, hasBodies = SIM.active();
   let t = 'Ready', cls = '';
   if (APP.recording) { const ph = APP.recording.phase; t = APP.recording.phone ? 'Making phone clip' : ph === 'sim' || ph === 'prep' ? 'Preparing video' : ph === 'enc' ? 'Rendering video' : '● Recording'; cls = 'warn'; }
   else if (SIM.layoutBusy || SIM.building) { t = 'Building bodies…'; cls = 'warn'; }
@@ -11464,10 +11939,10 @@ function boot() {
     else toast('Press Space to play the hammer demo. More demos are in the Scenes menu.');
   }, 400);
   // build the anatomy ahead of time so the first Play starts quickly
-  setTimeout(() => { if (!SIM.ready && SIM.bodyObjs().length) SIM.ensureLayout().catch(() => {}); }, 300);
+  setTimeout(() => { if (!SIM.ready && SIM.active()) SIM.ensureLayout().catch(() => {}); }, 300);
 }
 // handle for debugging from the browser console
-window.SB = { APP, SIM, HDEF, PERF, FXS, POSTFX, RIG, ANIM_CLIPS, ANIMLIB, TL, MOL, R, UI, REMOTE, PROPS, OUT, TYPES, DEMOS, MOTIONS, fn: { updateCropGuide, outSize, camForOutput, exportRange, loadDemo, addObject, addObjectAtCursor, select, setTool, setShading, insertKeyframeSelected, togglePlay, setFrame, renderStill, recordVideo, openLibrary, saveSceneCmd, showShortcuts, showAbout, showTips, applyMotion, doUndo, doRedo, buildProps, setProp, duplicateSelected, deleteSelected, resetSim, bakeAll, toggleCamView, frameSelected, blastAt, exportJSON, evalProps, snapshot, insertKey, changed, selectionBox, activateScene, retargetFBX, importMixamo, openAnimLibrary, sceneCam: (f) => sceneCamObj(f) } };
+window.SB = { APP, SIM, HDEF, PERF, FXS, POSTFX, RIG, ANIM_CLIPS, ANIMLIB, TL, MOL, R, UI, REMOTE, PROPS, OUT, TYPES, DEMOS, MOTIONS, fn: { updateCropGuide, outSize, camForOutput, exportRange, loadDemo, addObject, addObjectAtCursor, select, setTool, setShading, insertKeyframeSelected, togglePlay, setFrame, renderStill, recordVideo, openLibrary, saveSceneCmd, showShortcuts, showAbout, showTips, applyMotion, doUndo, doRedo, buildProps, setProp, duplicateSelected, deleteSelected, resetSim, bakeAll, toggleCamView, frameSelected, blastAt, exportJSON, evalProps, snapshot, insertKey, changed, selectionBox, activateScene, retargetFBX, importMixamo, openAnimLibrary, sceneCam: (f) => sceneCamObj(f), camState, lookThrough, followShots, cycleCam, followAnchor, deleteBlast, selectBlast, clearBlasts, dofParams, dofEnabled, camFocusDist, emitTable, emitCount, pickAt, V3: THREE.Vector3, emptyScene: () => activateScene(newScene('Test'), { undoable: false }) } };
 boot();
 
 </script>

@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Shatterbond Remote</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shatterbond">
+<meta name="theme-color" content="#121317">
+<style>
+:root { --bg: #121317; --panel: rgba(24, 25, 31, .86); --line: rgba(255, 255, 255, .09); --fg: #eceef3; --fg2: #a3a7b3; --acc: #7b5cff; --ok: #3ccf8e; --warn: #f5b84a; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; overscroll-behavior: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+#stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #0c0d10; }
+#view, #clip { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+#clip { position: absolute; inset: 0; display: none; background: #0c0d10; }
+#clip.on { display: block; }
+#touch { position: fixed; inset: 0; }
+.top { position: fixed; top: calc(env(safe-area-inset-top) + 10px); left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; pointer-events: none; }
+.chip { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font-size: 13px; color: var(--fg2); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip b { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+.dot.on { background: var(--ok); }
+.spacer { flex: 1; }
+.dock { position: fixed; left: 10px; right: 10px; bottom: calc(env(safe-area-inset-bottom) + 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 10px 12px 12px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.row { display: flex; gap: 8px; align-items: center; }
+.row + .row { margin-top: 10px; }
+button { white-space: nowrap; appearance: none; border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--fg); border-radius: 12px; min-height: 44px; min-width: 44px; padding: 0 12px; font: inherit; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+button:active { background: rgba(255,255,255,.14); }
+button.pri { background: var(--acc); border-color: transparent; }
+button:disabled { opacity: .35; }
+button.on { background: rgba(123, 92, 255, .28); border-color: rgba(123, 92, 255, .6); }
+button svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.seg { display: flex; flex: 1; gap: 4px; }
+.seg button { flex: 1; padding: 0 6px; font-size: 13px; }
+input[type=range] { flex: 1; height: 44px; accent-color: var(--acc); touch-action: pan-x; }
+.fr { font-variant-numeric: tabular-nums; color: var(--fg2); font-size: 13px; min-width: 64px; text-align: right; }
+.sheet { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: flex-end; z-index: 5; }
+.sheet.open { display: flex; }
+.sheet .card { width: 100%; max-height: 72vh; overflow: auto; background: #1a1b21; border-radius: 20px 20px 0 0; padding: 14px 12px calc(env(safe-area-inset-bottom) + 16px); touch-action: pan-y; }
+.sheet h3 { margin: 4px 6px 12px; font-size: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.grid button { justify-content: flex-start; text-align: left; min-height: 52px; padding: 8px 12px; }
+.grid button.cur { border-color: var(--acc); }
+.hint { position: fixed; left: 0; right: 0; top: 42%; text-align: center; color: var(--fg2); padding: 0 24px; pointer-events: none; }
+.hint b { color: var(--fg); display: block; font-size: 17px; margin-bottom: 6px; }
+input, select, textarea { user-select: text; -webkit-user-select: text; }
+/* editing */
+.ebar { display: none; }
+body.editing .ebar { display: flex; }
+.ebar { gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.ebar::-webkit-scrollbar { display: none; }
+.ebar button { flex: none; padding: 0 10px; font-size: 13px; min-height: 40px; }
+.tools { display: flex; gap: 2px; background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 12px; padding: 2px; flex: none; }
+.tools button { border: 0; background: none; min-height: 34px; border-radius: 9px; }
+.tools button.on { background: var(--acc); }
+#selchip { display: none; }
+body.editing #selchip { display: flex; }
+.sheet .card { position: relative; }
+.sheet.clear { background: transparent; }
+.sheet.clear .card { max-height: 50vh; }
+.sheet .x { position: absolute; right: 10px; top: 8px; min-height: 36px; min-width: 36px; border-radius: 50%; }
+.grp { margin: 14px 4px 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg2); }
+.fld { display: grid; grid-template-columns: 1fr auto 36px; gap: 4px 8px; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.fld .lb { font-size: 14px; }
+.fld .val { font-variant-numeric: tabular-nums; color: var(--fg2); font-size: 13px; }
+.fld .ctl { grid-column: 1 / 3; display: flex; gap: 6px; align-items: center; }
+.fld .ctl input[type=range] { height: 32px; }
+.fld input[type=number], .fld select, .fld input[type=text] { width: 100%; min-height: 38px; background: rgba(255,255,255,.06); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font: inherit; font-size: 14px; }
+.fld input[type=color] { width: 56px; height: 34px; border: 0; background: none; padding: 0; }
+.fld input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--acc); }
+.kd { grid-row: 1 / 3; grid-column: 3; min-height: 36px; min-width: 36px; padding: 0; border-radius: 10px; color: var(--fg2); background: none; border-color: transparent; font-size: 16px; }
+.kd.an { color: var(--warn); }
+.kd.on { color: var(--warn); background: rgba(245,184,74,.15); }
+.olist button { width: 100%; justify-content: flex-start; margin-bottom: 6px; }
+.olist button.cur { border-color: var(--acc); background: rgba(123,92,255,.18); }
+.olist small { color: var(--fg2); margin-left: auto; }
+.menu button { width: 100%; justify-content: flex-start; margin-bottom: 6px; }
+.menu button.danger { color: #ff7a7a; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top) + 56px); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 13px; z-index: 9; display: none; }
+@media (max-width: 420px) { #camlbl, #smlbl { display: none; } .dock .row { gap: 6px; } .dock .row > button { padding: 0 8px; min-width: 40px; } .seg button { padding: 0 3px; font-size: 12px; min-width: 0; } }
+@media (orientation: landscape) and (max-height: 500px) { .dock { left: auto; width: min(560px, 60vw); } .row + .row { margin-top: 6px; } button { min-height: 40px; } }
+</style>
+</head>
+<body>
+<div id="stage"><img id="view" alt="Live view from your PC"><video id="clip" playsinline muted loop preload="auto"></video></div>
+<div id="touch" aria-label="Drag to orbit, pinch to zoom, two fingers to pan, double tap for the scene camera"></div>
+<div class="hint" id="hint"><b>Connecting to your PC…</b>Keep Shatterbond open on the PC. This page shows its live simulation.</div>
+<div class="top">
+  <div class="chip" id="conn" role="button" aria-label="Scenes"><span class="dot" id="dot"></span><b id="scene">Shatterbond</b><svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;flex:none"><path d="m6 9 6 6 6-6"/></svg></div>
+  <div class="spacer"></div>
+  <div class="chip" id="selchip"><b id="selname">Nothing selected</b></div>
+  <div class="chip" id="stat">–</div>
+</div>
+<div class="dock">
+  <div class="ebar" id="ebar">
+    <button id="e-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+    <button id="e-objs">Objects</button>
+    <button id="e-props">Settings</button>
+    <div class="tools" id="tools"><button data-t="view" class="on">View</button><button data-t="move">Move</button><button data-t="turn">Turn</button><button data-t="size">Size</button></div>
+    <button id="e-key" aria-label="Keyframe">◆</button>
+    <button id="e-undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+    <button id="e-redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+    <button id="e-more" aria-label="More">•••</button>
+  </div>
+  <div class="row">
+    <button id="play" class="pri" aria-label="Play"></button>
+    <input id="scrub" type="range" min="0" max="100" value="0" aria-label="Timeline">
+    <span class="fr" id="fr">0</span>
+    <button id="smooth" aria-label="Smooth playback"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M3 15h18M8 5v4M16 5v4M8 15v4M16 15v4"/></svg><span id="smlbl">Smooth</span></button>
+  </div>
+  <div class="row">
+    <button id="reset" aria-label="Reset simulation"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+    <button id="cam" aria-label="Camera"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="13" height="10" rx="2"/><path d="M15.5 10.5 21.5 7v10l-6-3.5"/></svg><span id="camlbl">Scene</span></button>
+    <div class="seg" id="shade"><button data-s="skin">Skin</button><button data-s="xray">X‑ray</button><button data-s="tissue">Molecules</button></div>
+    <button id="edit" aria-label="Edit"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
+    <button id="dl" aria-label="Save clip" disabled><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg></button>
+  </div>
+</div>
+<div class="sheet" id="sheet"><div class="card"><h3>Scenes</h3><div class="grid" id="list"></div></div></div>
+<div class="sheet" id="esheet"><div class="card"><button class="x" id="ex" aria-label="Close">✕</button><h3 id="etitle"></h3><div id="ebody"></div></div></div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const PLAY = '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 24 24"><path d="M7 4h3.5v16H7zM13.5 4H17v16h-3.5z" fill="currentColor" stroke="none"/></svg>';
+  let editing = false;
+  let S = {}, seq = 0, lastFrameAt = 0, lastStateAt = 0, url = null, scrubbing = false;
+  // a finished simulation arrives as a video and plays here on the phone (smooth); until then, the live stream
+  const V = $('clip'); let clipId = '', clipOn = false, clipSent = null, clipHide = '', smoothAt = 0;
+  const clipFrame = () => (S.clip && S.clip.start || 0) + Math.round(V.currentTime * (S.fps || 60));
+  function setClipMode(on) {
+    clipOn = on; V.classList.toggle('on', on);
+    if (!on) V.pause();
+    if (clipSent !== on) { clipSent = on; send({ t: 'clipmode', on }); }
+  }
+  function syncClip() {
+    if (editing) { if (clipOn || clipId) { clipId = ''; setClipMode(false); V.removeAttribute('src'); V.load(); } return; }
+    let id = S.clip && S.clip.state === 'ready' ? S.clip.id : '';
+    if (id && id === clipHide) id = '';
+    if (!id) { if (clipOn || clipId) { clipId = ''; setClipMode(false); V.removeAttribute('src'); V.load(); } return; }
+    if (id === clipId) return;
+    clipId = id; setClipMode(false);
+    V.src = '/remote/clip?v=' + id;
+    V.oncanplay = () => { V.oncanplay = null; if (clipId !== id) return; setClipMode(true); V.play().catch(() => {}); $('hint').style.display = 'none'; render(); };
+    V.load();
+  }
+  V.addEventListener('timeupdate', () => { if (clipOn) render(); });
+  V.addEventListener('play', () => render()); V.addEventListener('pause', () => render());
+
+  // commands go one request at a time, in order (parallel requests could arrive out of order: a select overtaking a
+  // delete); whatever piles up while one is in flight goes in the next request as a batch
+  let sendQ = [], sending = false;
+  const send = (c) => { sendQ.push(c); pump(); };
+  async function pump() {
+    if (sending || !sendQ.length) return;
+    sending = true;
+    const batch = sendQ.splice(0, 40);
+    try { await fetch('/remote/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch.length === 1 ? batch[0] : batch) }); } catch (e) { /* PC gone: dropped */ }
+    sending = false; pump();
+  }
+  // tell the PC what shape to render
+  const sendSize = () => send({ t: 'size', w: innerWidth, h: innerHeight, dpr: Math.min(2, devicePixelRatio || 1) });
+  addEventListener('resize', () => setTimeout(sendSize, 150));
+
+  // live picture: long-poll the newest JPEG
+  async function frames() {
+    for (;;) {
+      try {
+        const r = await fetch('/remote/frame?after=' + seq, { cache: 'no-store' });
+        if (r.status === 200) {
+          seq = +r.headers.get('X-Seq') || seq + 1;
+          const b = await r.blob(), u = URL.createObjectURL(b);
+          const img = $('view');
+          await new Promise((ok) => { img.onload = img.onerror = ok; img.src = u; });
+          if (url) URL.revokeObjectURL(url); url = u;
+          lastFrameAt = Date.now(); $('hint').style.display = 'none';
+        }
+      } catch (e) { await new Promise(r => setTimeout(r, 1500)); }
+    }
+  }
+  async function state() {
+    for (;;) {
+      try { const r = await fetch('/remote/state', { cache: 'no-store' }); S = await r.json(); if (S.connected !== false) lastStateAt = Date.now(); syncClip(); render(); } catch (e) { if (e && e.name !== 'TypeError' || !/fetch|Load failed|NetworkError/i.test(String(e && e.message))) console.error('state', e && e.stack || e); S = {}; render(); }
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  function render() {
+    const live = (Date.now() - lastFrameAt < 9000 || Date.now() - lastStateAt < 5000) && S.connected !== false;
+    $('dot').className = 'dot' + (live ? ' on' : '');
+    $('scene').textContent = live ? (S.name || 'Shatterbond') : 'Waiting for your PC';
+    if (!live && (lastFrameAt || lastStateAt)) { $('hint').style.display = ''; $('hint').innerHTML = '<b>Lost the PC</b>Make sure Shatterbond is still open on it and Tailscale is connected.'; }
+    const playing = clipOn ? !V.paused : S.playing;
+    $('play').innerHTML = playing ? PAUSE : PLAY; $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    const C = S.clip || {};
+    $('stat').textContent = clipOn ? 'Smooth clip' : C.state === 'making' ? 'Making smooth clip ' + Math.round((C.prog || 0) * 100) + '%' : (S.status || '–');
+    const fr = clipOn ? clipFrame() : S.frame;
+    if (S.end != null && !scrubbing) { const sc = $('scrub'); sc.min = S.start || 0; sc.max = S.end; sc.value = fr || 0; }
+    if (fr != null) $('fr').textContent = fr + ' / ' + S.end;
+    for (const b of document.querySelectorAll('#shade button')) b.classList.toggle('on', b.dataset.s === S.shading);
+    $('dl').disabled = !clipOn;
+    const making = C.state === 'making', waiting = (!!S.smoothReq || Date.now() - smoothAt < 2000) && !making && !clipOn;
+    $('smooth').classList.toggle('on', clipOn || making || waiting);
+    $('smlbl').textContent = clipOn ? 'Live' : making ? Math.round((C.prog || 0) * 100) + '%' : waiting ? 'Wait' : 'Smooth';
+    if (waiting && !clipOn) $('stat').textContent = 'Smooth clip after the sim finishes';
+    renderEdit();
+    $('camlbl').textContent = S.camMode === 'free' ? 'Free' : 'Scene';
+    $('cam').classList.toggle('on', S.camMode === 'free');
+  }
+  $('play').onclick = () => {
+    if (clipOn) { if (V.paused) V.play().catch(() => {}); else V.pause(); return; }
+    send({ t: 'toggle' }); S.playing = !S.playing; render();
+  };
+  $('reset').onclick = () => send({ t: 'reset' });
+  // Smooth: render the finished sim into a video for this phone; tap again to go back to the live view (or cancel)
+  $('smooth').onclick = () => {
+    if (clipOn) { clipHide = clipId; syncClip(); render(); return; }
+    const C = S.clip || {};
+    if (C.state === 'making' || S.smoothReq) { send({ t: 'smooth', on: false }); S.smoothReq = false; smoothAt = 0; render(); return; }
+    clipHide = ''; clipId = ''; smoothAt = Date.now(); send({ t: 'smooth', on: true }); S.smoothReq = true; syncClip(); render();
+  };
+  // save the smooth clip (in the view it was made in) to the phone: share sheet where the browser allows it
+  // (Save Video puts it in Photos), otherwise a normal file download
+  const VIEWN = { skin: 'skin', xray: 'xray', tissue: 'molecules', molecules: 'onecolor' };
+  $('dl').onclick = async () => {
+    if (!clipOn || !clipId) return;
+    const id = clipId, ext = (S.clip && S.clip.type || '').includes('webm') ? 'webm' : 'mp4';
+    const name = ((S.name || 'shatterbond').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'shatterbond') + '-' + (VIEWN[S.shading] || 'clip') + '.' + ext;
+    const href = '/remote/clip?v=' + id + '&dl=1&name=' + encodeURIComponent(name);
+    $('stat').textContent = 'Saving clip…';
+    try {
+      if (navigator.canShare && window.File) {
+        const b = await (await fetch('/remote/clip?v=' + id)).blob();
+        const f = new File([b], name, { type: b.type || 'video/' + ext });
+        if (navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return; }
+      }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = href; a.download = name; document.body.append(a); a.click(); a.remove();
+  };
+  $('cam').onclick = () => { S.camMode = S.camMode === 'free' ? 'scene' : 'free'; send({ t: 'cam', mode: S.camMode }); render(); };
+  for (const b of document.querySelectorAll('#shade button')) b.onclick = () => { send({ t: 'shade', mode: b.dataset.s }); S.shading = b.dataset.s; render(); };
+  const sc = $('scrub');
+  sc.addEventListener('input', () => {
+    scrubbing = true; $('fr').textContent = sc.value + ' / ' + (S.end || 0);
+    if (clipOn) { V.pause(); V.currentTime = Math.max(0, (+sc.value - (S.clip.start || 0)) / (S.fps || 60)); }
+    else send({ t: 'frame', f: +sc.value });
+  });
+  sc.addEventListener('change', () => { scrubbing = false; });
+  $('conn').onclick = () => {
+    const L = $('list'); L.textContent = '';
+    const hd = (t) => { const h = document.createElement('div'); h.className = 'grp'; h.style.gridColumn = '1 / -1'; h.textContent = t; L.append(h); };
+    if ((S.lib || []).length) {
+      hd('Your scenes');
+      for (const d of S.lib) { const b = document.createElement('button'); b.textContent = d.name; if (d.id === S.libId) b.className = 'cur'; b.onclick = () => { send({ t: 'lib', id: d.id }); $('sheet').classList.remove('open'); }; L.append(b); }
+      hd('Demos');
+    }
+    for (const d of S.demos || []) {
+      const b = document.createElement('button'); b.textContent = d.name; if (d.id === S.demo) b.className = 'cur';
+      b.onclick = () => { send({ t: 'demo', id: d.id }); $('sheet').classList.remove('open'); };
+      L.append(b);
+    }
+    $('sheet').classList.add('open');
+  };
+  $('sheet').onclick = (e) => { if (e.target === $('sheet')) $('sheet').classList.remove('open'); };
+
+  // gestures: one finger orbits, pinch zooms, two fingers pan, double tap returns to the scene camera
+  const P = new Map(); let acc = { ox: 0, oy: 0, px: 0, py: 0, z: 1 }, lastTap = 0, pinch0 = 0, mid0 = null;
+  const T = $('touch');
+  const flush = () => {
+    if (acc.ox || acc.oy) send({ t: 'orbit', dx: acc.ox, dy: acc.oy });
+    if (acc.px || acc.py) send({ t: 'pan', dx: acc.px, dy: acc.py });
+    if (Math.abs(acc.z - 1) > 1e-3) send({ t: 'zoom', f: acc.z });
+    if (acc.rot) send({ t: 'rot', axis: 1, d: +acc.rot.toFixed(2) });
+    if (acc.scl && Math.abs(acc.scl - 1) > 1e-3) send({ t: 'scl', f: +acc.scl.toFixed(4) });
+    if (typeof flushDrag === 'function') flushDrag();
+    acc = { ox: 0, oy: 0, px: 0, py: 0, z: 1 };
+  };
+  setInterval(flush, 60);
+  const mid = () => { const a = [...P.values()]; return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) }; };
+  // one finger: orbit (View tool) or move / turn / size the selected object; tap selects, double tap frames it,
+  // a long press opens the object's menu. Two fingers always pinch-zoom and pan the camera.
+  let g1 = null, pressT = 0, dragAcc = null;
+  const nx = (e) => e.clientX / innerWidth, ny = (e) => e.clientY / innerHeight;
+  T.addEventListener('pointerdown', (e) => {
+    T.setPointerCapture(e.pointerId); P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (P.size === 2) { const m = mid(); pinch0 = m.d; mid0 = m; if (g1 && g1.grab) { send({ t: 'drop' }); } g1 = null; clearTimeout(pressT); }
+    if (P.size === 1) {
+      g1 = { x0: e.clientX, y0: e.clientY, t0: Date.now(), x: nx(e), y: ny(e), moved: false, grab: false, long: false };
+      clearTimeout(pressT);
+      if (editing) pressT = setTimeout(() => { if (g1 && !g1.moved) { g1.long = true; send({ t: 'pick', x: g1.x, y: g1.y }); setTimeout(() => openActions(), 700); } }, 550);
+    }
+  });
+  T.addEventListener('pointermove', (e) => {
+    const p = P.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    const W = Math.max(innerWidth, innerHeight);
+    if (P.size === 1 && g1) {
+      if (!g1.moved && Math.hypot(e.clientX - g1.x0, e.clientY - g1.y0) > 8) { g1.moved = true; clearTimeout(pressT); }
+      if (!g1.moved) return;
+      const ed = editing && tool !== 'view' && S.edit && S.edit.act;
+      if (ed && tool === 'move') {
+        if (!g1.grab) { g1.grab = true; send({ t: 'grab', x: g1.x, y: g1.y }); }
+        dragAcc = { x: nx(e), y: ny(e) };
+      } else if (ed && tool === 'turn') { acc.rot = (acc.rot || 0) + dx / W * 360; }
+      else if (ed && tool === 'size') { acc.scl = (acc.scl || 1) * Math.exp(-dy / W * 2); }
+      else { acc.ox += dx / W; acc.oy += dy / W; }
+    } else if (P.size === 2) {
+      const m = mid();
+      if (pinch0 > 0 && m.d > 0) { acc.z *= pinch0 / m.d; pinch0 = m.d; }
+      if (mid0) { acc.px += (m.x - mid0.x) / W; acc.py += (m.y - mid0.y) / W; }
+      mid0 = m;
+    }
+  });
+  const up = (e) => {
+    const had = P.size; P.delete(e.pointerId);
+    if (P.size < 2) { pinch0 = 0; mid0 = null; }
+    clearTimeout(pressT);
+    if (had === 1 && g1) {
+      if (g1.grab) { flushDrag(); send({ t: 'drop' }); }
+      else if (!g1.moved && !g1.long && Date.now() - g1.t0 < 350) {
+        const now = Date.now();
+        if (now - lastTap < 320) { lastTap = 0; clearTimeout(tapT); if (editing) send({ t: 'focus', x: g1.x, y: g1.y }); else send({ t: 'cam', mode: 'scene' }); }
+        else { lastTap = now; const x = g1.x, y = g1.y; if (editing) tapT = setTimeout(() => send({ t: 'pick', x, y }), 330); }
+      }
+      g1 = null;
+    }
+  };
+  let tapT = 0;
+  const flushDrag = () => { if (dragAcc) { send({ t: 'drag', x: dragAcc.x, y: dragAcc.y }); dragAcc = null; } };
+  T.addEventListener('pointerup', up); T.addEventListener('pointercancel', up);
+  T.addEventListener('wheel', (e) => { e.preventDefault(); acc.z *= Math.exp(e.deltaY * 0.0015); }, { passive: false });
+
+  /* ---------- editing ---------- */
+  let tool = 'view', sheetKind = '', propsSig = '', propsBusyT = 0;
+  const E = () => S.edit || {};
+  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const mk = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+  function toast(t) { const n = $('toast'); n.textContent = t; n.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => { n.style.display = 'none'; }, 1800); }
+  function setEditing(on) {
+    editing = on; document.body.classList.toggle('editing', on); $('edit').classList.toggle('on', on);
+    send({ t: 'edit', on }); if (on) { syncClip(); toast('Edit mode: tap to select, long-press for options'); } else { closeSheet(); setTool('view'); }
+    render();
+  }
+  function setTool(t) { tool = t; for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.t === t); }
+  for (const b of document.querySelectorAll('#tools button')) b.onclick = () => { setTool(b.dataset.t); if (b.dataset.t !== 'view' && !E().act) toast('Select an object first'); };
+  $('edit').onclick = () => setEditing(!editing);
+  $('e-undo').onclick = () => send({ t: 'undo' });
+  $('e-redo').onclick = () => send({ t: 'redo' });
+  $('e-key').onclick = () => { if (!E().act) return toast('Select an object first'); send({ t: 'key' }); toast('Keyframe at frame ' + (S.frame || 0)); };
+  function openSheet(kind, title, fill, clear) {
+    sheetKind = kind; $('etitle').textContent = title; const b = $('ebody'); b.textContent = ''; delete b.dataset.sig; fill(b);
+    $('esheet').classList.toggle('clear', !!clear); $('esheet').classList.add('open');
+  }
+  function closeSheet() { sheetKind = ''; propsSig = ''; $('esheet').classList.remove('open'); }
+  $('ex').onclick = closeSheet;
+  $('esheet').onclick = (e) => { if (e.target === $('esheet')) closeSheet(); };
+  // Add menu
+  $('e-add').onclick = () => openSheet('add', 'Add', (b) => {
+    let g = '', grid = null;
+    (E().add || []).forEach((it, i) => {
+      if (it.g !== g) { g = it.g; b.append(mk('div', 'grp', g)); grid = mk('div', 'grid'); b.append(grid); }
+      const btn = mk('button', null, it.l); btn.onclick = () => { send({ t: 'add', i }); closeSheet(); toast('Added ' + it.l); }; grid.append(btn);
+    });
+  });
+  // Objects list (outliner)
+  function fillObjs(b) {
+    const ed = E(), L = mk('div', 'olist');
+    const w = mk('button', ed.props && ed.props.ty === 'world' && !ed.act ? 'cur' : null); w.append(mk('span', null, 'World settings')); w.onclick = () => { send({ t: 'sel', id: 'world' }); closeSheet(); openProps('world'); }; L.append(w);
+    for (const o of ed.objs || []) {
+      const btn = mk('button', (ed.sel || []).includes(o.id) ? 'cur' : null); btn.append(mk('span', null, o.n), mk('small', null, o.ty));
+      btn.onclick = () => { send({ t: 'sel', id: o.id }); closeSheet(); };
+      L.append(btn);
+    }
+    b.append(L);
+  }
+  $('e-objs').onclick = () => openSheet('objs', 'Objects', fillObjs);
+  // object menu (long press or •••)
+  function openActions() {
+    const ed = E(), a = ed.act && (ed.objs || []).find(o => o.id === ed.act);
+    openSheet('menu', a ? a.n : 'Scene', (b) => {
+      const M = mk('div', 'menu');
+      const item = (label, fn, cls) => { const x = mk('button', cls, label); x.onclick = () => { closeSheet(); fn(); }; M.append(x); };
+      if (a) {
+        item('Settings', () => openProps(a.id));
+        item('Frame it in view', () => send({ t: 'focus' }));
+        item('Keyframe here (frame ' + (S.frame || 0) + ')', () => send({ t: 'key' }));
+        item('Remove keyframe here', () => send({ t: 'unkey' }));
+        item('Duplicate', () => send({ t: 'dup' }));
+        item('Rename', () => { const n = prompt('Name', a.n); if (n) send({ t: 'rename', id: a.id, name: n }); });
+        item('Delete', () => send({ t: 'del' }), 'danger');
+      }
+      item((ed.autokey ? 'Turn off' : 'Turn on') + ' auto-keying', () => send({ t: 'autokey', on: !ed.autokey }));
+      item('World settings (time, gravity, look)', () => { send({ t: 'sel', id: 'world' }); openProps('world'); });
+      item('Simulate whole range now', () => send({ t: 'scene', op: 'bake' }));
+      item('Save scene to library', () => { send({ t: 'scene', op: 'save' }); toast('Saved on the PC'); });
+      item('Save as a copy', () => send({ t: 'scene', op: 'copy' }));
+      item('New empty scene', () => { if (confirm('Start a new scene? Unsaved changes stay in undo on the PC.')) send({ t: 'scene', op: 'new' }); });
+      b.append(M);
+    });
+  }
+  $('e-more').onclick = openActions;
+  // Settings: every field of the selected object, built from the PC's own field list
+  let sendT = {}, pend = {};
+  const sendSet = (id, k, v) => { pend[k] = { id, k, v }; propsBusyT = Date.now(); if (!sendT[k]) sendT[k] = setTimeout(() => { send(Object.assign({ t: 'set' }, pend[k])); sendT[k] = 0; }, 90); };
+  const fmt = (v, f) => { if (typeof v !== 'number') return ''; const st = f.step || 0.01; const d = st >= 1 ? 0 : Math.min(4, Math.max(0, -Math.floor(Math.log10(st)))); return v.toFixed(d) + (f.unit ? ' ' + f.unit : ''); };
+  function fieldRow(pr, f) {
+    const row = mk('div', 'fld'); row.dataset.k = f.k;
+    const lb = mk('span', 'lb', f.l), val = mk('span', 'val'); row.append(lb, val);
+    const kd = mk('button', 'kd', '◆'); kd.setAttribute('aria-label', 'Keyframe ' + f.l);
+    if (f.ka) kd.onclick = () => send({ t: 'keyfield', id: pr.id, k: f.k }); else kd.style.visibility = 'hidden';
+    row.append(kd);
+    const ctl = mk('div', 'ctl'); row.append(ctl);
+    if (f.ty === 'num' || f.ty === 'int') {
+      if (f.min != null && f.max != null && (f.max - f.min) / (f.step || 0.01) <= 100000 && !(f.ty === 'int' && f.max - f.min > 2000)) {
+        const r = mk('input'); r.type = 'range'; r.min = f.min; r.max = f.max; r.step = f.step || (f.ty === 'int' ? 1 : 0.01);
+        r.oninput = () => { val.textContent = fmt(+r.value, f); sendSet(pr.id, f.k, +r.value); };
+        ctl.append(r); row._set = (v) => { r.value = v; val.textContent = fmt(v, f); };
+      } else {
+        const n = mk('input'); n.type = 'number'; n.step = f.step || 'any'; n.inputMode = 'decimal';
+        n.onchange = () => sendSet(pr.id, f.k, +n.value); n.onfocus = () => { propsBusyT = Date.now() + 1e9; }; n.onblur = () => { propsBusyT = Date.now(); };
+        ctl.append(n); row._set = (v) => { if (document.activeElement !== n) n.value = v; val.textContent = f.unit || ''; };
+      }
+    } else if (f.ty === 'bool') {
+      const c = mk('input'); c.type = 'checkbox'; c.onchange = () => sendSet(pr.id, f.k, c.checked); ctl.append(c); row._set = (v) => { c.checked = !!v; };
+    } else if (f.ty === 'select') {
+      const sl = mk('select'); for (const [v, t] of f.opt || []) { const o = mk('option', null, t); o.value = v; sl.append(o); }
+      sl.onchange = () => sendSet(pr.id, f.k, sl.value); ctl.append(sl); row._set = (v) => { sl.value = String(v); };
+    } else if (f.ty === 'color') {
+      const c = mk('input'); c.type = 'color'; c.oninput = () => { val.textContent = c.value; sendSet(pr.id, f.k, c.value); }; ctl.append(c); row._set = (v) => { c.value = v || '#000000'; val.textContent = v; };
+    } else if (f.ty === 'vec3') {
+      const ns = [0, 1, 2].map((i) => { const n = mk('input'); n.type = 'number'; n.step = f.step || 'any'; n.inputMode = 'decimal'; n.setAttribute('aria-label', f.l + ' ' + 'XYZ'[i]); return n; });
+      const go = () => sendSet(pr.id, f.k, ns.map(n => +n.value));
+      for (const n of ns) { n.onchange = go; n.onfocus = () => { propsBusyT = Date.now() + 1e9; }; n.onblur = () => { propsBusyT = Date.now(); }; ctl.append(n); }
+      row._set = (v) => { if (Array.isArray(v)) ns.forEach((n, i) => { if (document.activeElement !== n) n.value = +(+v[i]).toFixed(4); }); val.textContent = f.unit || ''; };
+    } else { return null; }
+    row._kd = kd;
+    return row;
+  }
+  // want: the id the settings are for ('world' or an object id); until the PC's state catches up, shows Loading
+  let propsWant = null;
+  function openProps(want) {
+    propsWant = typeof want === 'string' ? want : null;
+    if (!propsWant && !E().props) return toast('Select an object first');
+    openSheet('props', E().props ? E().props.n : 'Settings', fillProps, true);
+  }
+  function fillProps(b) {
+    const pr = E().props;
+    if (!pr || (propsWant && pr.id !== propsWant)) { b.append(mk('p', null, propsWant ? 'Loading…' : 'Nothing selected.')); propsSig = 'wait'; return; }
+    propsWant = null;
+    $('etitle').textContent = pr.n;
+    propsSig = pr.id + '|' + pr.g.map(g => g.t + ':' + g.f.map(f => f.k + (f.opt ? f.opt.length : '')).join(',')).join(';');
+    for (const g of pr.g) {
+      const rows = g.f.map(f => fieldRow(pr, f)).filter(Boolean); if (!rows.length) continue;
+      b.append(mk('div', 'grp', g.t), ...rows);
+    }
+    updateProps();
+  }
+  function updateProps() {
+    const pr = E().props; if (!pr) return;
+    const map = {}; for (const g of pr.g) for (const f of g.f) map[f.k] = f;
+    for (const row of $('ebody').querySelectorAll('.fld')) {
+      const f = map[row.dataset.k]; if (!f || !row._set) continue;
+      row._set(f.v);
+      row._kd.classList.toggle('on', f.an === 2); row._kd.classList.toggle('an', f.an === 1);
+    }
+  }
+  $('e-props').onclick = () => openProps();
+  window.__ed = () => ({ sheetKind, propsSig: propsSig.slice(0, 20), propsWant, sid: S.edit && S.edit.props && S.edit.props.id, lastStateAt });
+  function renderEdit() {
+    const ed = E();
+    const a = ed.act && (ed.objs || []).find(o => o.id === ed.act);
+    $('selname').textContent = a ? a.n : (ed.props && ed.props.ty === 'world' ? 'World' : 'Nothing selected');
+    $('e-undo').disabled = !ed.undo; $('e-redo').disabled = !ed.redo;
+    $('e-key').classList.toggle('on', !!ed.autokey);
+    if (sheetKind === 'props') {
+      const pr = ed.props;
+      const sig = pr && !(propsWant && pr.id !== propsWant) ? pr.id + '|' + pr.g.map(g => g.t + ':' + g.f.map(f => f.k + (f.opt ? f.opt.length : '')).join(',')).join(';') : '';
+      if (sig !== propsSig && !(sig === '' && propsSig === 'wait')) { const b = $('ebody'); const sc = b.parentNode.scrollTop; b.textContent = ''; fillProps(b); b.parentNode.scrollTop = sc; }
+      else if (Date.now() - propsBusyT > 700) updateProps();
+    } else if (sheetKind === 'objs') { const b = $('ebody'); if (!b.dataset.sig || b.dataset.sig !== JSON.stringify([ed.objs, ed.sel])) { b.textContent = ''; fillObjs(b); b.dataset.sig = JSON.stringify([ed.objs, ed.sel]); } }
+  }
+
+  sendSize(); frames(); state();
+  setInterval(() => { if (document.visibilityState === 'visible') sendSize(); }, 5000);
+})();
+</script>
+</body>
+</html>
