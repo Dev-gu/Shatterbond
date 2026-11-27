@@ -807,7 +807,7 @@ TYPES.camera = {
     F('fov', 'Field of view', 'num', { min: 5, max: 140, step: 0.5, unit: '°' }),
   ] }, { id: 'lens', title: 'Depth of field', fields: [
     F('dof', 'Depth of field', 'bool', { help: 'Blur what is nearer or further than the focus point when looking through this camera, in renders and videos. Can be keyframed to switch on and off.' }),
-    F('focusObj', 'Focus on', 'select', { noanim: true, options: () => [['', 'Focus distance below'], ...allObjs().filter(x => x.type !== 'camera').map(x => [x.id, x.name])], help: 'Keep an object sharp wherever it goes. Pick "Focus distance below" to set the distance by hand.' }),
+    F('focusObj', 'Focus on', 'select', { noanim: true, options: () => [['', 'Focus distance below'], ['@auto', 'Autofocus (whatever the centre of the view points at)'], ...allObjs().filter(x => x.type !== 'camera').map(x => [x.id, x.name])], help: 'Autofocus shoots a ray from the middle of the view and focuses on the first thing it hits, so moving the camera keeps the nearest object sharp. Or pick an object to keep it sharp wherever it goes, or "Focus distance below" to set the distance by hand.' }),
     F('focusDist', 'Focus distance', 'num', { min: 0, max: 200, step: 0.05, unit: 'm', help: 'How far from the camera things are sharpest. 0 focuses on the "Looks at" point. Keyframe it to pull focus.' }),
     F('blur', 'Blur amount', 'num', { min: 0, max: 6, step: 0.05, help: 'How strongly things out of focus are blurred. 0 is no blur, 1 is normal, higher is dreamier. Keyframe it to blur in or out.' }),
     F('fstop', 'Aperture (f-stop)', 'num', { min: 0.7, max: 22, step: 0.1, help: 'Photography style control of the same blur: lower numbers blur more.' }),

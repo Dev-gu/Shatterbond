@@ -79,13 +79,46 @@ function dofEnabled(co) {
 // distance from the camera to where it is focused: a picked object, a set distance, or the "Looks at" point
 function camFocusDist(co, P) {
   P = P || camState(co);
-  const fo = P.focusObj ? objById(P.focusObj) : null;
+  if (P.focusObj === '@auto') { const d = autofocusDist(co, P); if (d > 0) return d; }
+  const fo = P.focusObj && P.focusObj !== '@auto' ? objById(P.focusObj) : null;
   if (fo && fo !== co) {
     const a = followAnchor(fo);
     if (a) return Math.max(0.1, Math.hypot(a.x - P.position[0], a.y - P.position[1], a.z - P.position[2]));
   }
   if (P.focusDist > 0) return P.focusDist;
   return Math.max(0.1, Math.hypot(P.target[0] - P.position[0], P.target[1] - P.position[1], P.target[2] - P.position[2]));
+}
+// autofocus: a ray straight out of the middle of the camera's view; the focus goes to the first thing it hits
+// (molecules, weapons, props, the floor). Re-measured every frame, so moving the camera or the subject keeps it sharp.
+const AF = { ray: new THREE.Raycaster(), key: '', d: 0 };
+function autofocusDist(co, P) {
+  const o = new THREE.Vector3(P.position[0], P.position[1], P.position[2]);
+  const dir = new THREE.Vector3(P.target[0] - o.x, P.target[1] - o.y, P.target[2] - o.z);
+  if (dir.lengthSq() < 1e-10) return 0;
+  dir.normalize();
+  const key = o.toArray().map(v => v.toFixed(4)).join() + dir.toArray().map(v => v.toFixed(4)).join() + '|' + (typeof _dispKey !== 'undefined' ? _dispKey : '') + '|' + APP.evalStamp + '|' + APP.frame;
+  if (key === AF.key) return AF.d;
+  AF.ray.set(o, dir); AF.ray.near = 0.05; AF.ray.far = 1e4;
+  const meshes = [];
+  for (const [, v] of APP.views) {
+    const ob = v.obj; if (ob.type === 'camera' || ob === co) continue;
+    const Pv = ob._eval || ob.props; if (Pv.visible === false) continue;
+    for (const m of v.pick) if (visibleChain(m) && !(m.material && m.material.wireframe)) meshes.push(m);
+  }
+  let best = Infinity;
+  const hits = AF.ray.intersectObjects(meshes, false);
+  if (hits[0]) best = hits[0].distance;
+  const ph = typeof pickParticles === 'function' ? pickParticles(AF.ray.ray) : null;
+  if (ph && ph.t < best) best = ph.t;
+  const W = APP.scene.world.props;
+  if (W.floor && dir.y < -1e-4) { const t = -o.y / dir.y; if (t > 0 && t < best) best = t; }
+  // while bodies are being rebuilt after an edit their molecules can't be hit yet: hold the last focus instead of jumping
+  const unsure = SIM.layoutDirty || !SIM.disp;
+  if (!unsure) AF.key = key;
+  AF.last = AF.last || new Map();
+  if (isFinite(best) && !(unsure && AF.last.has(co.id) && best > AF.last.get(co.id))) AF.last.set(co.id, best);
+  AF.d = AF.last.has(co.id) ? AF.last.get(co.id) : 0;
+  return AF.d;
 }
 // focus distance and blur strength for a camera (scene camera props, or the editor view's orbit target)
 function dofParams(cam, co) {
