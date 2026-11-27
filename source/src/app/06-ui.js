@@ -1056,7 +1056,12 @@ function renderPanel(body) {
   }
   body.append(groupEl('r:perf', 'Performance', [
     ...perfPanelRows(),
-    selRow('Cache memory', String(Math.round(SIM.budget / 1048576)), [['300', '300 MB'], ['600', '600 MB'], ['900', '900 MB'], ['1500', '1.5 GB']], (v) => { SIM.budget = +v * 1048576; }, 'Simulated frames are kept in memory up to this size.'),
+    selRow('Cache memory', String(Math.round(SIM.budget / 1048576)), [['768', '768 MB'], ['1536', '1.5 GB'], ['3072', '3 GB'], ['6144', '6 GB'], ['10240', '10 GB'], ['16384', '16 GB']],
+      (v) => { SIM.budget = +v * 1048576; try { localStorage.setItem('shatterbond.cacheMB', v); } catch (e) { /* ignore */ } if (SIM.cache.full) { SIM.invalidate(); toast('Simulating again from the start with the bigger cache'); } toast(`Cache memory: ${+v >= 1024 ? (+v / 1024) + ' GB' : v + ' MB'}`); },
+      'Simulated frames are kept in memory up to this size. Big cinematic scenes need several GB; pick less than your computer has free, or the browser can run out of memory. When it fills up the simulation stops and tells you.'),
+    (() => { const c = el('input', { type: 'checkbox', 'aria-label': 'Compact cache' }); c.checked = SIM.compact !== false;
+      c.onchange = () => { SIM.compact = c.checked; try { localStorage.setItem('shatterbond.cacheCompact', c.checked ? '1' : '0'); } catch (e) { /* ignore */ } SIM.invalidate(); toast(c.checked ? 'Compact cache on: about half the memory per frame' : 'Full precision cache'); };
+      return el('div', { class: 'row', title: 'Stores cached frames in about half the memory, with rounding far smaller than a molecule. Parts of the scene that do not move are stored only once either way.' }, el('label', null, 'Compact cache'), el('div', { class: 'ctl' }, el('label', { class: 'checkf' }, c, 'Half the memory per frame')), el('span')); })(),
     el('div', { class: 'p-help', style: { margin: '4px 2px' } }, 'For speed: use Low resolution on bodies, fewer substeps in the Scene tab, or turn off shadows.'),
   ]));
 }

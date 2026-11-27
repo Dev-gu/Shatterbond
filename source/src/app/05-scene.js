@@ -1,3 +1,10 @@
+/* cache memory: saved per browser; the default scales with the computer's memory (browsers report at most 8 GB) */
+function cacheBudgetDefault() {
+  try { const v = +localStorage.getItem('shatterbond.cacheMB'); if (v > 0) return v * 1048576; } catch (e) { /* storage unavailable */ }
+  const dm = navigator.deviceMemory || 8;
+  return (dm >= 8 ? 3072 : dm >= 4 ? 1536 : 768) * 1048576;
+}
+function cacheCompactDefault() { try { return localStorage.getItem('shatterbond.cacheCompact') !== '0'; } catch (e) { return true; } }
 /* ===================== scene model, views, evaluation, simulation ===================== */
 const APP = {
   scene: null, views: new Map(), sel: [], active: null,
@@ -232,7 +239,7 @@ const SIM = {
   layout: [], fractures: [], fracSeen: new Set(), ready: false, building: false, token: 0,
   cache: { start: 0, end: -1, pos: [], st: [], bytes: 0, full: false },
   live: null, liveSt: null, prevCols: new Map(), target: -1, ms: 0, broken: 0, awake: 0,
-  disp: null, dispSt: null, budget: 900 * 1024 * 1024,
+  disp: null, dispSt: null, budget: cacheBudgetDefault(), compact: cacheCompactDefault(),
   init() {
     try {
       const src = document.getElementById('engine-src').textContent;
@@ -291,7 +298,7 @@ const SIM = {
   },
   invalidate() {
     this.fractures = []; this.fracSeen = new Set();
-    this.token++;
+    this.token++; this._fullTold = false; this._prevEnc = null; this._posMemo = null;
     this.ready = false; this.building = false; this.busy = false; this.inflight = 0; this.nextF = 0;
     this.cache = { start: APP.scene ? APP.scene.world.props.frameStart : 0, end: -1, pos: [], st: [], bytes: 0, full: false };
     this.live = null; this.prevCols.clear(); this.target = -1;
@@ -418,7 +425,7 @@ const SIM = {
         K = this.kinAt(f, k);
         if (K && a > 1e-4) { const K1 = this.kinAt(f + 1, k); if (K1) K = this.lerpKin(K, K1, a); }
         if (!K && this.layout[k].data.rig) {
-          for (let g = f - 1; g >= c.start; g--) { const Kg = this.kinAt(g, k); if (Kg) { const pf = c.pos[g - c.start]; if (pf) R = { fr: g, pos: pf, K: Kg }; break; } }
+          for (let g = f - 1; g >= c.start; g--) { const Kg = this.kinAt(g, k); if (Kg) { const pf = this.posOf(g); if (pf) R = { fr: g, pos: pf, K: Kg }; break; } }
         }
       }
       out.push(K || R ? { K, R } : null);
@@ -488,18 +495,91 @@ const SIM = {
       console.error(err); toast('Simulation failed to start: ' + err.message, true); return false;
     } finally { if (token === this.token) this.building = false; UI.busy(null); }
   },
+  /* Cached frames are stored in chunks of CH molecules. A chunk that did not change since the previous frame
+   * (sleeping bodies, settled debris, a figure waiting for the hit) is shared instead of stored again. In compact
+   * mode each chunk is 16-bit relative to its own bounding box: the rounding is a few micrometres for a body part
+   * (well under a thousandth of a molecule), and frames take about half the memory. */
   store(f, pos, st, balls, kin) {
     const c = this.cache;
     const k = f - c.start;
+    if (c.full) return;
+    const fr = this.budget - c.bytes > 0 ? this.encodeFrame(pos, st) : null;
+    if (!fr) { this.cacheFull(f); return; }
     if (!c.balls) c.balls = [];
     c.balls[k] = balls || null;
     if (!c.kin) c.kin = [];
     c.kin[k] = kin || null;
-    if (c.bytes < this.budget) {
-      const q = new Float32Array(pos); // full precision: quantising made cached frames shimmer
-      c.pos[k] = q; c.st[k] = st.slice(); c.bytes += q.byteLength + st.byteLength;
-    } else c.full = true;
+    c.pos[k] = fr; c.st[k] = fr.st; c.bytes += fr.bytes;
     c.end = f;
+  },
+  encodeFrame(pos, st) {
+    const CH = 4096, N = st.length, nch = Math.ceil(N / CH) || 0, compact = this.compact !== false;
+    const prev = this._prevEnc && this._prevEnc.n === N && this._prevEnc.compact === compact && this._prevEnc.token === this.token ? this._prevEnc : null;
+    const ch = new Array(nch), sc = new Array(nch);
+    let bytes = 64;
+    try {
+      for (let j = 0; j < nch; j++) {
+        const a = j * CH, b = Math.min(N, a + CH);
+        // unchanged since the previous frame: share it
+        if (prev) {
+          const pr = prev.raw, pst = prev.rawSt; let same = true;
+          for (let i = 3 * a, e = 3 * b; i < e; i++) if (pr[i] !== pos[i]) { same = false; break; }
+          if (same) ch[j] = prev.ch[j];
+          let sameS = true;
+          for (let i = a; i < b; i++) if (pst[i] !== st[i]) { sameS = false; break; }
+          if (sameS) sc[j] = prev.sc[j];
+        }
+        if (!ch[j]) {
+          if (compact) {
+            let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+            for (let i = a; i < b; i++) { const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+            // a chunk spread over more than 4 m (debris flung far away) keeps full precision instead
+            if (x1 - x0 > 4 || y1 - y0 > 4 || z1 - z0 > 4) { ch[j] = { f: pos.slice(3 * a, 3 * b) }; bytes += 12 * (b - a) + 16; if (!sc[j]) { sc[j] = st.slice(a, b); bytes += b - a; } continue; }
+            const kx = (x1 - x0) / 65535 || 0, ky = (y1 - y0) / 65535 || 0, kz = (z1 - z0) / 65535 || 0;
+            const ix = kx ? 1 / kx : 0, iy = ky ? 1 / ky : 0, iz = kz ? 1 / kz : 0, q = new Uint16Array(3 * (b - a));
+            for (let i = a, o = 0; i < b; i++, o += 3) { q[o] = Math.round((pos[3 * i] - x0) * ix); q[o + 1] = Math.round((pos[3 * i + 1] - y0) * iy); q[o + 2] = Math.round((pos[3 * i + 2] - z0) * iz); }
+            ch[j] = { q, m: [x0, y0, z0, kx, ky, kz] };
+            bytes += q.byteLength + 48;
+          } else { ch[j] = { f: pos.slice(3 * a, 3 * b) }; bytes += 12 * (b - a) + 16; }
+        }
+        if (!sc[j]) { sc[j] = st.slice(a, b); bytes += b - a; }
+      }
+    } catch (err) { console.warn('cache allocation failed', err); return null; }
+    this._prevEnc = { n: N, compact, token: this.token, raw: pos, rawSt: st, ch, sc };
+    return { n: N, ch, sc, bytes, st: sc };
+  },
+  decodeFrame(fr, outPos, outSt) {
+    const CH = 4096;
+    for (let j = 0; j < fr.ch.length; j++) {
+      const a = j * CH, C = fr.ch[j];
+      if (C.f) outPos.set(C.f, 3 * a);
+      else {
+        const q = C.q, m = C.m, n = q.length / 3;
+        for (let i = 0, o = 3 * a, t = 0; i < n; i++, o += 3, t += 3) { outPos[o] = m[0] + q[t] * m[3]; outPos[o + 1] = m[1] + q[t + 1] * m[4]; outPos[o + 2] = m[2] + q[t + 2] * m[5]; }
+      }
+      if (outSt) outSt.set(fr.sc[j], a);
+    }
+  },
+  // positions of a cached frame as a plain array (kept for the last frame asked, the skins re-read it every frame)
+  posOf(f) {
+    const c = this.cache, fr = c.pos[f - c.start]; if (!fr) return null;
+    const M = this._posMemo;
+    if (M && M.fr === fr) return M.pos;
+    const pos = new Float32Array(3 * fr.n); this.decodeFrame(fr, pos, null);
+    this._posMemo = { fr, pos };
+    return pos;
+  },
+  // the memory limit was reached: stop simulating further and say so, once, in plain words
+  cacheFull(f) {
+    const c = this.cache; c.full = true;
+    const gb = (c.bytes / 1073741824).toFixed(2);
+    if (!this._fullTold) {
+      this._fullTold = true;
+      const msg = `Cache memory full at frame ${c.end} (${gb} GB). Frames after that are not simulated. Raise "Cache memory" in the Render tab > Performance, keep "Compact cache" on, or use a lower body resolution.`;
+      toast(msg, true);
+      if (typeof setStatusHint === 'function') setStatusHint(msg);
+    }
+    if (UI.timeline) UI.timeline.dirty = true;
   },
   // where the simulated balls are at frame f (null when that frame is not simulated yet)
   ballsFor(f) {
@@ -525,8 +605,7 @@ const SIM = {
   load(f, outPos, outSt) {
     const c = this.cache, k = f - c.start, q = c.pos[k];
     if (!q) return false;
-    outPos.set(q);
-    outSt.set(c.st[k]);
+    this.decodeFrame(q, outPos, outSt);
     return true;
   },
   fieldsFor(f) {

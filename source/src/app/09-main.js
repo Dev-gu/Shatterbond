@@ -747,7 +747,12 @@ function frameBody(now) {
     if (APP.playing && hasBodies) {
       SIM.target = Math.max(SIM.target, Math.min(e, Math.floor(ff) + 8));
       const avail = SIM.ready ? SIM.cache.end : s - 1;
-      if (Math.floor(ff) > avail) {
+      // the cache is full: nothing more will be simulated, so play up to the last cached frame and loop or stop there
+      if (SIM.cache.full && Math.floor(ff) > avail && avail > s) {
+        if (APP.loop) { ff = s + (ff - s) % (avail - s + 1); APP.playFrameF = ff; APP.playClock = now; }
+        else { ff = avail; APP.playFrameF = avail; APP.playClock = now; togglePlay(); }
+        APP.waiting = false;
+      } else if (Math.floor(ff) > avail) {
         const hold = Math.max(Math.min(APP.frame, avail), s);
         APP.waiting = true;
         APP.playFrameF = Math.max(hold, Math.min(Math.floor(ff), avail)); APP.playClock = now; ff = APP.playFrameF;
@@ -825,6 +830,7 @@ function updateStats() {
   let t = 'Ready', cls = '';
   if (APP.recording) { const ph = APP.recording.phase; t = APP.recording.phone ? 'Making phone clip' : ph === 'sim' || ph === 'prep' ? 'Preparing video' : ph === 'enc' ? 'Rendering video' : '● Recording'; cls = 'warn'; }
   else if (SIM.layoutBusy || SIM.building) { t = 'Building bodies…'; cls = 'warn'; }
+  else if (c.full) { t = `Cache full at ${c.end}`; cls = 'warn'; }
   else if (hasBodies && SIM.target > c.end && SIM.ready && c.end < frameRange()[1] && !c.full) { t = `Simulating ${c.end}`; cls = 'live'; }
   else if (APP.playing && APP.waiting) { t = 'Waiting for simulation'; cls = 'warn'; }
   else if (APP.playing) { t = 'Playing'; cls = 'live'; }
