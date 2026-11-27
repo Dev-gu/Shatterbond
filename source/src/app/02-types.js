@@ -866,6 +866,7 @@ const WORLD_GROUPS = [
   ] },
   { id: 'look', title: 'Look', fields: [
     F('particleStyle', 'Molecules', 'select', { options: [['anatomical', 'Anatomical tissue colors'], ['molecular', 'Single molecule color']] }),
+    F('gore', 'Blood & guts', 'bool', { noanim: true, help: 'With a single molecule color, torn muscle and organs still show their own red colors, so crushed or cut bodies spill blood and guts. Off keeps every torn molecule the molecule color.' }),
     F('moleculeColor', 'Prop molecule color', 'color', { help: 'Inside color of molecular props. Each body has its own Inside color.' }),
     F('background', 'Background', 'color'),
     F('floorColor', 'Floor', 'color'),
@@ -880,7 +881,7 @@ const WORLD_GROUPS = [
   ] },
 ];
 const WORLD_DEFAULTS = () => ({ frameStart: 0, frameEnd: 300, fps: '60', timeScale: 1, gravity: -9.81, substeps: 6, floor: true, floorFriction: 0.7, airDrag: 0.03,
-  particleStyle: 'molecular', moleculeColor: '#4b22c9', background: '#b3b5b9', floorColor: '#a3a5aa', sunIntensity: 2.1, sunAngle: 38, sunHeight: 64, exposure: 1.0, shadows: true, particleSize: 1.0, blobs: true, wetness: 0.6 });
+  particleStyle: 'molecular', moleculeColor: '#4b22c9', background: '#b3b5b9', floorColor: '#a3a5aa', sunIntensity: 2.1, sunAngle: 38, sunHeight: 64, exposure: 1.0, shadows: true, particleSize: 1.0, blobs: true, wetness: 0.6, gore: true });
 
 /* laser-wire grid: thin glowing wires stretched across a frame that sweeps through whatever stands in it */
 TYPES.wires = {

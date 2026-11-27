@@ -33,7 +33,7 @@
     this.x = new Float32Array(3 * N); this.xp = new Float32Array(3 * N); this.v = new Float32Array(3 * N);
     this.r = new Float32Array(3 * N); this.w = new Float32Array(N); this.rad = new Float32Array(N);
     this.pb = new Uint16Array(N); this.seg = new Uint8Array(N); this.sk = new Uint8Array(4 * N); this.skw = new Float32Array(4 * N);
-    this.nb0 = new Uint8Array(N); this.nbb = new Uint8Array(N); this.spg = new Uint8Array(N).fill(255); this.press = new Float32Array(N); this.pcnt = new Uint8Array(N); this.pdur = new Uint8Array(N);
+    this.nb0 = new Uint8Array(N); this.nbb = new Uint8Array(N); this.spg = new Uint8Array(N).fill(255); this.press = new Float32Array(N); this.pcnt = new Uint8Array(N); this.pdur = new Uint8Array(N); this.crx = new Float32Array(N); this.csus = new Uint8Array(N);
     this.anc = new Uint8Array(N); this.ancPos = new Float32Array(3 * N);
     this.state = new Uint8Array(N); this.cand = new Uint8Array(N); this.ct = new Uint8Array(N);
     this.dead = new Uint8Array(N);
@@ -752,6 +752,9 @@
         if (!aabbOverlap(A.aabb, C.aabb, rel + 0.03)) continue;
         this._xb[a] = 1; this._xb[c] = 1; xs = Math.max(xs, rel); minSp = Math.min(minSp, A.spacing || 0.02, C.spacing || 0.02);
       }
+      // a body being pressed by a collider also collides with itself through its whole volume, so squashed flesh
+      // can't pass through itself and lose its volume: it has to go somewhere, which is what bursts it open
+      for (let a = 0; a < nbl; a++) { const A = bl[a]; A.selfCol = !!A.softSeg && !A.asleep && !A.kinematic && this.frame - (A.colT ?? -99) < 3; if (A.selfCol) this._xb[a] = 1; }
       this._xFast = xs;
       if (xs > 0) ns = Math.min(Math.max(ns, Math.ceil(xs / Math.max(0.006, minSp * 0.9))), Math.max(ns, inp.maxSubsteps || 40));
     }
@@ -1126,7 +1129,7 @@
             x[i3] += nx * pen; x[i3 + 1] += ny * pen; x[i3 + 2] += nz * pen;
             // a fast projectile's contacts do not steer the shape fit (that would drag whole clusters along at its speed)
             if (!spent) ct[i] = cB[c] < Infinity ? 3 : 2;
-            b.touchT = this.frame;
+            b.touchT = this.frame; if (cB[c] === Infinity) b.colT = this.frame;
             if (iv > b.koSpeed) b.koHit = true;
             if (iv > b.boneSnap && b.skeleton) { const br_ = this.boneRef[i]; if (br_ >= 0 && !dead[br_]) this._snapBone(br_, nx, ny, nz); }
             // sharp weapons (blades, saws, spikes) also cut with their sliding edge, not only by ramming
@@ -1383,7 +1386,7 @@
     for (let c = 0; c < nc; c++) if (cB[c] < Infinity && cP[c] > 0) this.colMom.set(cols[c]._id, { P: cP[c], f: this.frame });
 
     // fracture: bonds whose strain at the end of the frame exceeds their limit snap (done on the GPU in GPU mode)
-    const press = this.press, pcnt = this.pcnt;
+    const press = this.press, pcnt = this.pcnt, crx = this.crx, csus = this.csus;
     if (!useGpu) for (let k = 0; k < nbBody; k++) {
       const b = bodies[k]; if (b.asleep || b.kinematic) continue;
       const str = b.str, pl = b.plastic, br0 = this.br0, bbone = this.bbone;
@@ -1405,7 +1408,9 @@
           }
         }
         const st = L / br0[q] - 1, sr = L / br[q] - 1;
-        if (st > bsl[q] * str || sr > bsl[q] * str || sr < -bcl[q] * str) {
+        // crushed flesh: held under a press it can't take the stretching of being squashed flat, so it splits open
+        const cz = crx[i] > crx[j] ? crx[i] : crx[j], sk = cz > 0 ? str * (1 - Engine.CRUSHWEAK * cz) : str;
+        if (st > bsl[q] * sk || sr > bsl[q] * sk || sr < -bcl[q] * str) {
           bx[q] = 1; nbb[i]++; nbb[j]++; cand[i] = 1; cand[j] = 1; brokenThisFrame++; b.dirty = true;
         }
       }
@@ -1421,13 +1426,49 @@
         if (this.tis[i] === 0 && press[i] > burst) { if (this.pdur[i] < 255) this.pdur[i]++; } else this.pdur[i] = 0;
         if (this.pdur[i] > Math.min(250, 8 / tsK) && nbb[i] < this.nb0[i]) { this._breakParticle(i); }
       }
+      // crushing: flesh squeezed for a while (not the jolt of a hit) builds up crush damage, which weakens it (see fracture)
+      if (!b.softSeg) continue;
+      const touching = this.frame - (b.touchT ?? -99) < 3, c0 = Engine.CRUSHP, sus = Math.min(250, Math.round(5 / tsK));
+      let nCr = 0;
+      for (let i = b.start, e = b.start + b.count; i < e; i++) {
+        const p = press[i];
+        if (touching && p > c0) { if (csus[i] < 255) csus[i]++; } else csus[i] = 0;
+        if (csus[i] > sus) crx[i] = Math.min(1, crx[i] + (p - c0) * 1.5 * tsK);
+        else if (crx[i] > 0) crx[i] *= 1 - 0.01 * tsK;
+        if (crx[i] > 0.5) nCr++;
+        // badly crushed soft insides turn to pulp (loose molecules), and the skin over them gives way here and there
+        const cz = crx[i];
+        if (cz > Engine.CRUSHPULP && nbb[i] < this.nb0[i] && this.tis[i] !== this.boneT && this.tis[i] !== this.cartT) {
+          const rate = (cz - Engine.CRUSHPULP) * (this.tis[i] === 0 ? 0.15 : 0.3) * tsK;
+          if (hash32(i * 2246822519 + this.frame * 3266489917) < rate) this._breakParticle(i);
+        }
+      }
+      b.crushAmt = nCr / b.count;
+      // the squeezed insides of a torn, crushed body squirt out toward wherever the pressure is lower (the openings)
+      if (nCr > 0) {
+        const adj = this.adj, as = this.adjStart, kv = Engine.CRUSHSQUIRT;
+        for (let i = b.start, e = b.start + b.count; i < e; i++) {
+          if (crx[i] < 0.3 || press[i] < c0 || w[i] === 0 || this.tis[i] === this.boneT) continue;
+          if (nbb[i] === 0 && this.tis[i] !== 0) continue; // still whole flesh: it doesn't flow
+          const i3 = 3 * i; let gx = 0, gy = 0, gz = 0;
+          for (let a = as[i]; a < as[i + 1]; a++) {
+            const q = adj[a], j = bi[q] === i ? bj[q] : bi[q], j3 = 3 * j;
+            const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2], l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
+            const dp = press[i] - press[j]; gx += dx / l * dp; gy += dy / l * dp; gz += dz / l * dp;
+          }
+          const gl = Math.sqrt(gx * gx + gz * gz + gy * gy); if (gl < 1e-6) continue;
+          const sp = Math.min(Engine.CRUSHVMAX, (press[i] - c0) * kv * crx[i]);
+          // mostly sideways: the floor and the plate are in the way above and below
+          v[i3] += gx / gl * sp; v[i3 + 1] += gy / gl * sp * 0.3; v[i3 + 2] += gz / gl * sp;
+        }
+      }
     }
 
     // open wounds: where the skin is torn, the soft insides behind it loosen and ooze out, a few layers deep
     for (let k = 0; k < nbBody; k++) {
       const b = bodies[k]; if (b.asleep || b.kinematic || !b.softSeg) continue;
       const sp = b.params.spill != null ? b.params.spill : 0.5; if (!(sp > 0)) continue;
-      const depth = Math.round(2 + sp * 4), cap = b.count * sp * 0.035, pr = Math.min(0.5, sp * 0.08 * dt * 60), spg = this.spg, tis = this.tis, adj = this.adj, as = this.adjStart, nb0 = this.nb0;
+      const depth = Math.round(2 + sp * 4) + Math.round(8 * Math.min(1, (b.crushAmt || 0) * 5)), cap = b.count * sp * 0.035 * (1 + 10 * Math.min(1, (b.crushAmt || 0) * 5)), pr = Math.min(0.5, sp * 0.08 * dt * 60), spg = this.spg, tis = this.tis, adj = this.adj, as = this.adjStart, nb0 = this.nb0;
       let any = false;
       for (let i = b.start, e = b.start + b.count; i < e; i++) {
         if (dead[i]) continue;
@@ -1543,6 +1584,9 @@
    * far too stiff with tiny steps, so weapons stop breaking things). The solver runs fixed ticks of sim time and
    * each frame shows the molecules blended between the two ticks around it. */
   Engine.TICK = 1 / 240;
+  // crushing: mean bond squeeze that counts as being crushed, how much crush damage weakens flesh against stretching,
+  // and how hard the insides squirt out of a crushed, torn body (m/s per unit of pressure, capped)
+  Engine.CRUSHP = 0.035; Engine.CRUSHWEAK = 0.8; Engine.CRUSHSQUIRT = 40; Engine.CRUSHVMAX = 5; Engine.CRUSHPULP = 0.35;
   Engine.prototype._slowPlan = function (inp) {
     const TICK = Engine.TICK;
     if (!(inp.dt < TICK * 0.999)) { this._slow = null; return null; }
@@ -1860,7 +1904,7 @@
           const md = (ri + rad[j]) * 0.92;
           if (d2 >= md * md || d2 < 1e-14) continue;
           const other = pb[i] !== pb[j];
-          if (!other && !(cand[i] && cand[j])) continue; // inside one body only torn molecules collide
+          if (!other && !(cand[i] && cand[j]) && !bodies[pb[i]].selfCol) continue; // inside one body only torn molecules collide (unless it is being pressed)
           const wj = w[j], ws = wi + wj;
           if (ws === 0) continue;
           const d = Math.sqrt(d2), pen = Math.min(md - d, other ? Math.max(maxCorr, 0.45 * md) : maxCorr);

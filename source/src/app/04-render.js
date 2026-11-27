@@ -345,7 +345,7 @@ const MOL = {
   },
   applyStyle() {
     const W = APP.worldP || WORLD_DEFAULTS();
-    this.style = W.particleStyle; this.size = W.particleSize; this.blobs = W.blobs !== false;
+    this.style = W.particleStyle; this.size = W.particleSize; this.blobs = W.blobs !== false; this.gore = W.gore !== false;
     const mc = hexToRgb(W.moleculeColor);
     this.mol = mc;
     const xray = this.shading === 'xray';
@@ -667,7 +667,9 @@ const MOL = {
         nv++;
         const i3 = 3 * i, j3 = 3 * j, px = pos[i3], py = pos[i3 + 1], pz = pos[i3 + 2];
         let cr, cg, cb;
-        if (mol && (mode === 'skin' || mode === 'molecules' || s > 0)) { const f = b.cM[j3]; cr = mc[0] * f; cg = mc[1] * f; cb = mc[2] * f; }
+        // blood & guts: torn muscle and organs of a body keep their own red colors even with a single molecule color
+        const gut = this.gore && s > 0 && b.isHuman && tis[j] !== TI.skin && tis[j] !== TI.fat && mode !== 'molecules';
+        if (mol && !gut && (mode === 'skin' || mode === 'molecules' || s > 0)) { const f = b.cM[j3]; cr = mc[0] * f; cg = mc[1] * f; cb = mc[2] * f; }
         else { cr = b.cT[j3]; cg = b.cT[j3 + 1]; cb = b.cT[j3 + 2]; }
         if (blobOn && s > 0 && nb < BMAX) {
           if (6 * nb + 6 > this.bPts.length) { const a = new Float32Array(this.bPts.length * 2); a.set(this.bPts); this.bPts = a; }
