@@ -1129,7 +1129,7 @@
             x[i3] += nx * pen; x[i3 + 1] += ny * pen; x[i3 + 2] += nz * pen;
             // a fast projectile's contacts do not steer the shape fit (that would drag whole clusters along at its speed)
             if (!spent) ct[i] = cB[c] < Infinity ? 3 : 2;
-            b.touchT = this.frame; if (cB[c] === Infinity) b.colT = this.frame;
+            b.touchT = this.frame; if (cB[c] === Infinity && cshat[c] >= 0.45) b.colT = this.frame; // blunt only: spikes and blades cut, they do not crush
             if (iv > b.koSpeed) b.koHit = true;
             if (iv > b.boneSnap && b.skeleton) { const br_ = this.boneRef[i]; if (br_ >= 0 && !dead[br_]) this._snapBone(br_, nx, ny, nz); }
             // sharp weapons (blades, saws, spikes) also cut with their sliding edge, not only by ramming
@@ -1428,7 +1428,7 @@
       }
       // crushing: flesh squeezed for a while (not the jolt of a hit) builds up crush damage, which weakens it (see fracture)
       if (!b.softSeg) continue;
-      const touching = this.frame - (b.touchT ?? -99) < 3, c0 = Engine.CRUSHP, sus = Math.min(250, Math.round(5 / tsK));
+      const touching = b.selfCol, c0 = Engine.CRUSHP, sus = Math.min(250, Math.round(5 / tsK));
       let nCr = 0;
       for (let i = b.start, e = b.start + b.count; i < e; i++) {
         const p = press[i];
@@ -1586,6 +1586,7 @@
   Engine.TICK = 1 / 240;
   // crushing: mean bond squeeze that counts as being crushed, how much crush damage weakens flesh against stretching,
   // and how hard the insides squirt out of a crushed, torn body (m/s per unit of pressure, capped)
+  Engine.SQUEEZEV = 1.2; // max speed a ball pinned under flesh can squirt out at (m/s)
   Engine.CRUSHP = 0.035; Engine.CRUSHWEAK = 0.8; Engine.CRUSHSQUIRT = 40; Engine.CRUSHVMAX = 5; Engine.CRUSHPULP = 0.35;
   Engine.prototype._slowPlan = function (inp) {
     const TICK = Engine.TICK;
@@ -1764,7 +1765,7 @@
       B.floor = false;
     }
     for (const B of balls) {
-      let ax = 0, ay = 0, az = 0, fvx = 0, fvy = 0, fvz = 0, fn = 0;
+      let ax = 0, ay = 0, az = 0, fvx = 0, fvy = 0, fvz = 0, fn = 0, mpen = 0;
       const bvx = B.x[0] - B.xp[0], bvy = B.x[1] - B.xp[1], bvz = B.x[2] - B.xp[2];
       for (const b of this.bodies) {
         if (b.asleep || !sphereAabb(B.x[0], B.x[1], B.x[2], B.r + 0.05, b.aabb)) continue;
@@ -1783,6 +1784,7 @@
           const d2 = dx * dx + dy * dy + dz * dz; if (d2 >= R * R) continue;
           const d = Math.sqrt(d2) || 1e-6, nx = dx / d, ny = dy / d, nz = dz / d, pen = R - d;
           const iv = ((bvx - (x[i3] - xp[i3])) * nx + (bvy - (x[i3 + 1] - xp[i3 + 1])) * ny + (bvz - (x[i3 + 2] - xp[i3 + 2])) * nz) * ih;
+          if (pen > mpen) mpen = pen;
           if (w[i] === 0) { ax -= nx * pen; ay -= ny * pen; az -= nz * pen; continue; }
           const mp = nbb[i] < nb0[i] ? mpA : b.pmass, kp = B.m / (mp + B.m), kb = mp / (mp + B.m);
           fvx += (x[i3] - xp[i3]) * ih; fvy += (x[i3 + 1] - xp[i3 + 1]) * ih; fvz += (x[i3 + 2] - xp[i3 + 2]) * ih; fn++;
@@ -1794,6 +1796,9 @@
         }
         if (touched) b.touchT = this.frame;
       }
+      // the contacts' pushes are summed, so a ball buried in flesh (a body landing on it) got shoved many times its
+      // deepest overlap in one substep and shot out through the body at 20+ m/s; never move it further than that
+      const al = Math.hypot(ax, ay, az); if (al > mpen && al > 0) { const k = mpen / al; ax *= k; ay *= k; az *= k; }
       B.x[0] += ax; B.x[1] += ay; B.x[2] += az;
       B.hit = [ax, ay, az]; B.fv = fn ? [fvx / fn, fvy / fn, fvz / fn] : null;
     }
@@ -1846,7 +1851,12 @@
           let rn = rx * nx + ry * ny + rz * nz; if (rn > 0) { rx -= nx * rn * (1 - Engine.FLESHREST); ry -= ny * rn * (1 - Engine.FLESHREST); rz -= nz * rn * (1 - Engine.FLESHREST); }
           rn = rx * nx + ry * ny + rz * nz; const kf = Math.min(1, 40 * h);
           rx -= (rx - nx * rn) * kf; ry -= (ry - ny * rn) * kf; rz -= (rz - nz * rn) * kf;
-          vx = fv[0] + rx; vy = fv[1] + ry; vz = fv[2] + rz; } }
+          vx = fv[0] + rx; vy = fv[1] + ry; vz = fv[2] + rz;
+          // pinned between flesh and the floor: the push out is a squeeze, not a kick. Without this a body landing
+          // on a resting ball shot it out sideways at 6+ m/s like a pip; now it rolls out slowly or stays under
+          if (B.floor && ny < -0.3) { const ux = vx - fv[0], uz = vz - fv[2], us = Math.hypot(ux, uz);
+            if (us > Engine.SQUEEZEV) { const k = Engine.SQUEEZEV / us; vx = fv[0] + ux * k; vz = fv[2] + uz * k; }
+            vy = Math.min(vy, Math.max(0, fv[1])); } } }
       if (B.cn) { // bounce off a prop: the speed into its surface comes back scaled by the bounciness, sliding loses a little
         const [nx, ny, nz, vin] = B.cn, vn = vx * nx + vy * ny + vz * nz;
         if (vin < -0.5) { const add = -vin * B.rest - vn; vx += nx * add; vy += ny * add; vz += nz * add; }
