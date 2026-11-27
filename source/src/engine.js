@@ -682,17 +682,29 @@
     if (others.length && hp) {
       // another body's molecules near where this one's will be at the end of the frame (not where they are now: a
       // running or jumping body covers several centimetres a frame and would already be inside the other one)
-      const x = this.x, CS = 0.06, inv = 1 / CS, H = new Map(), key = (a, c, d) => (a * 73856093) ^ (c * 19349663) ^ (d * 83492791);
+      const x = this.x, v = this.v, hitV = Math.min(b.koSpeed || 2.5, Engine.HITBYV), CS = 0.06, inv = 1 / CS, H = new Map(), key = (a, c, d) => (a * 73856093) ^ (c * 19349663) ^ (d * 83492791);
       for (let q = 0; q < hp.length; q += 3) { const k = key(Math.floor(hp[q] * inv), Math.floor(hp[q + 1] * inv), Math.floor(hp[q + 2] * inv)); let L = H.get(k); if (!L) H.set(k, L = []); L.push(q); }
       const reach = Math.max(0.035, 2.2 * b.spacing), r2 = reach * reach;
+      // closing speed averaged over the whole contact patch: single molecules of flesh it is shoving bounce about
+      let cvS = 0, cvN = 0;
       for (const o of others) for (let j = o.start, e = o.start + o.count; j < e; j += 2) {
         if (this.dead[j]) continue;
         const j3 = 3 * j, px = x[j3], py = x[j3 + 1], pz = x[j3 + 2], cx = Math.floor(px * inv), cy = Math.floor(py * inv), cz = Math.floor(pz * inv);
         for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (let d = -1; d <= 1; d++) {
           const L = H.get(key(cx + a, cy + c, cz + d)); if (!L) continue;
-          for (const q of L) { const dx = hp[q] - px, dy = hp[q + 1] - py, dz = hp[q + 2] - pz; if (dx * dx + dy * dy + dz * dz < r2) { if (o.asleep) o.asleep = false; return true; } }
+          for (const q of L) {
+            const dx = hp[q] - px, dy = hp[q + 1] - py, dz = hp[q + 2] - pz, dd = dx * dx + dy * dy + dz * dz;
+            if (dd >= r2) continue;
+            if (o.asleep) o.asleep = false; // it is about to be touched, so it has to take part in contacts
+            // this body is the one doing the touching (a headbutt, a punch landing on someone standing there): it stays
+            // on its animation and shoves the other body, feet planted. Only the other body coming at it (another
+            // animated body, or one flying, falling or swinging into it faster than would knock it out) makes it react
+            if (o.kinematic && o.kin && o.kin.sb) return true;
+            const d = Math.sqrt(dd) || 1; cvS += (v[j3] * dx + v[j3 + 1] * dy + v[j3 + 2] * dz) / d; cvN++;
+          }
         }
       }
+      if (cvN && cvS / cvN > hitV) return true;
     }
     return false;
   };
@@ -1566,7 +1578,7 @@
     if (this.balls.length) { balls = { keys: this.balls.map(B => B.key), data: new Float32Array(this.balls.length * 7) }; this.balls.forEach((B, k) => { balls.data.set([B.x[0], B.x[1], B.x[2], B.q[0], B.q[1], B.q[2], B.q[3]], 7 * k); }); }
     // bodies still posed by their skeleton at the end of this frame (the renderer skins them straight from the bones)
     const kin = []; for (let k = 0; k < bodies.length; k++) { const b = bodies[k]; if (b.kinematic && b.kin && b.kin.sa) kin.push(k); }
-    return { ms: t1 - t0, awake, broken: this.statBroken, bonds: this.B, links: this.lcount, events, balls, kin };
+    return { ms: t1 - t0, awake, broken: this.statBroken, bonds: this.B, links: this.lcount, events, balls, kin, bst: bodies.map(b => [b.kinematic ? 1 : 0, b.animOff ? 1 : 0, b.balLost ? 1 : 0, +(b.ko || 0).toFixed(2), b.drive === this.frame ? 1 : 0, b.dbgWhy || ''].join(',')) };
   };
 
   Engine.prototype._step1 = function (inp) { this.outX = null; return this._stepGen(inp, false).next().value; };
@@ -1650,7 +1662,7 @@
   Engine.COLDENS = 1500; // kg/m^3 for animated colliders
   Engine.SPIKEGRIP = typeof process !== 'undefined' && process.env && process.env.SPIKEGRIP ? +process.env.SPIKEGRIP : 1;
   Engine.LIGHTM = 150; // kg: heavier colliders (hammers, rams, presses) still act as unstoppable
-  Engine.BALANCE = 30; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
+  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
   Engine.DRIVE_EASE = 0.35; // share of the way to the animated shape the muscles move each frame // 1/s²: how hard a driven (hit but still animated) body holds its animated stance
   Engine.RELVMAX = 4; // m/s: fastest a limb may move relative to its body when physics takes over from an animation
   Engine.FASTV = 6; // m/s: only faster colliders have a momentum budget

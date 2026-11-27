@@ -658,7 +658,7 @@ const SIM = {
       const r = await this.call('step', { input }, []);
       if (token !== this.token) return;
       this.live = r.pos; this.liveSt = r.st;
-      this.ms = r.stats.ms; this.broken = r.stats.broken; this.awake = r.stats.awake; this.physics = r.stats.physics || null;
+      this.ms = r.stats.ms; this.broken = r.stats.broken; this.awake = r.stats.awake; this.physics = r.stats.physics || null; (this.bstLog || (this.bstLog = []))[f] = r.stats.bst;
       // skeleton pose of each body still animated at the end of the frame: the skin is drawn from it directly
       let kin = null;
       if (r.stats.kin && r.stats.kin.length) { kin = []; for (const k of r.stats.kin) { const bp = bodies[k]; if (bp && bp.kin && bp.kin.sb) kin[k] = { S: bp.kin.sb, p: bp.kin.b.p, q: bp.kin.b.q }; } }

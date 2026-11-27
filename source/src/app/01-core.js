@@ -184,7 +184,7 @@ const G_ANIM = { id: 'anim', title: 'Animation', fields: [
   F('animSpeed', 'Speed', 'num', { min: 0.1, max: 4, step: 0.05, help: 'Plays the animation faster or slower.' }),
   F('animLoop', 'Loop', 'bool', { noanim: true }),
   F('animMove', 'Walk forward', 'bool', { noanim: true, help: 'Walking and running carry the body forward (in the direction it faces).' }),
-  F('react', 'React to hits', 'bool', { noanim: true, help: 'When something touches the animated body, physics takes over and it reacts from the pose it is in.' }),
+  F('react', 'React to hits', 'bool', { noanim: true, help: 'When something hits the animated body, physics takes over and it reacts from the pose it is in. Touching someone itself (a punch or headbutt landing) does not stop the animation: it plays through and shoves them.' }),
   F('animDrive', 'Keep animating after a hit', 'bool', { noanim: true, help: 'After physics takes over, the body keeps doing its animation with its muscles while it is pushed and hit (an active ragdoll), until a hard hit knocks it out. Off: it holds the pose it was in.' }),
   F('braceDanger', 'Flinch from danger', 'bool', { noanim: true, help: 'Raises the arms to shield the head when a weapon comes close.' }),
   F('importClip', 'Mixamo clip', 'button', { noanim: true, text: 'Import FBX…', action: () => importMixamo(), help: 'Download an animation from mixamo.com as FBX (any skin option, 30 fps) and import it here, or drop the files onto the window. It plays on this body, fingers included, and is saved so every scene can use it (Animation menu > Saved animations).' }),
