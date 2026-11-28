@@ -26,6 +26,7 @@
 
   /* ---------- build ---------- */
   Engine.prototype.build = function (d) {
+    this._desc = d;
     let N = 0, B = 0;
     for (const b of d.bodies) { N += b.count; B += b.bondRest.length; }
     this.N = N; this.B = B;
@@ -131,6 +132,32 @@
     this.colPrev = null;
     this.xlk = null; this._serial = (this._serial || 0) + 1; this._bxDirty = true; this._slow = null; this.outX = null;
     return { N, B };
+  };
+
+  /* ---------- append bodies to a running simulation (play mode spawns) ----------
+   * Rebuilds with the old bodies plus the new ones, then copies every per-molecule / per-bond state array back
+   * over the old part: new molecules and bonds are appended at the end, so old indices keep their meaning. */
+  const APPEND_SKIP = new Set(['hcount', 'hentries', 'hlist', 'uf', 'uf2', 'uf3', 'adjStart', 'adj']);
+  const APPEND_DROP = ['piece', 'cvn', 'hbm', 'hcc', 'hec', 'hcf', 'hef', '_cbox', 'xlk', 'outX', '_xb', '_slow', 'colPrev'];
+  Engine.prototype.append = function (newBodies) {
+    const old = {}; for (const k of Object.keys(this)) old[k] = this[k];
+    for (const s of this._desc.bodies) s._anc0 = undefined; // build pushes anchors into this; old bodies keep their own list
+    const d = Object.assign({}, this._desc, { bodies: this._desc.bodies.concat(newBodies), startFrame: this.frame });
+    this.build(d);
+    for (const k in old) {
+      const a = old[k], b = this[k];
+      if (ArrayBuffer.isView(a)) {
+        if (APPEND_SKIP.has(k)) continue;
+        if (ArrayBuffer.isView(b) && b.constructor === a.constructor && b.length >= a.length && b !== a) b.set(a);
+        continue;
+      }
+      if (['N', 'B', 'bodies', 'hsize', 'LMAX', '_desc', '_serial', 'boneT', 'cartT'].includes(k)) continue;
+      this[k] = a;
+    }
+    this.bodies = old.bodies.concat(this.bodies.slice(old.bodies.length));
+    for (const k of APPEND_DROP) this[k] = null;
+    this._bxDirty = true; this._serial = (old._serial || 0) + 1;
+    return { N: this.N, B: this.B };
   };
 
   /* ---------- helpers ---------- */
@@ -876,7 +903,9 @@
           const d = Math.sqrt(d2) || 1e-6, f = F.strength * (1 - d / R);
           if (f > b.koSpeed) b.koHit = true;
           const jit = 0.75 + 0.5 * hash32(i * 7 + this.frame);
-          v[i3] += dx / d * f * jit; v[i3 + 1] += (dy / d * f + f * (F.lift || 0)) * jit; v[i3 + 2] += dz / d * f * jit;
+          if (F.dir) { // a bullet: mostly along its path, with a little spray outwards
+            const D = F.dir; v[i3] += (D[0] * 0.8 + dx / d * 0.35) * f * jit; v[i3 + 1] += (D[1] * 0.8 + dy / d * 0.35) * f * jit; v[i3 + 2] += (D[2] * 0.8 + dz / d * 0.35) * f * jit;
+          } else { v[i3] += dx / d * f * jit; v[i3 + 1] += (dy / d * f + f * (F.lift || 0)) * jit; v[i3 + 2] += dz / d * f * jit; }
           if (d < dmgR && hash32(i * 13 + 5) < (1 - d / dmgR) * 1.6) this._breakParticle(i);
         }
       }
@@ -932,6 +961,40 @@
       if (!b.kinematic || !b.kin || !b.kin.sb || !b.params.react) continue;
       if (this._animHit(b, cols, ctype, cdim, fields)) { b.animOff = true; b.kin = null; this._release(b, true); }
     }
+    // grabs (play mode hands): a closing hand takes hold of the molecules (and loose balls) inside it; they then
+    // follow the hand rigidly every substep, so a held limb swings with it and pulls hard enough to tear off
+    if (!this._grabs) this._grabs = new Map();
+    {
+      const G = inp.grabs || [], live = new Set();
+      for (const g of G) {
+        live.add(g.id);
+        let S = this._grabs.get(g.id);
+        if (!S) {
+          const m = quatToMat(g.q[0], g.q[1], g.q[2], g.q[3]), r2 = g.r * g.r, idx = [], off = [], held = new Set();
+          for (let k = 0; k < nbBody; k++) {
+            const b = bodies[k]; if (b.kinematic || !sphereAabb(g.p[0], g.p[1], g.p[2], g.r, b.aabb)) continue;
+            for (let i = b.start, e = b.start + b.count; i < e; i++) {
+              if (w[i] === 0 || this.dead[i]) continue;
+              const i3 = 3 * i, dx = x[i3] - g.p[0], dy = x[i3 + 1] - g.p[1], dz = x[i3 + 2] - g.p[2];
+              if (dx * dx + dy * dy + dz * dz > r2) continue;
+              idx.push(i); off.push(m[0] * dx + m[3] * dy + m[6] * dz, m[1] * dx + m[4] * dy + m[7] * dz, m[2] * dx + m[5] * dy + m[8] * dz);
+              held.add(k);
+            }
+          }
+          let ball = null, boff = null;
+          if (!idx.length) for (const B of this.balls) {
+            const dx = B.x[0] - g.p[0], dy = B.x[1] - g.p[1], dz = B.x[2] - g.p[2];
+            if (dx * dx + dy * dy + dz * dz < (g.r + B.r) * (g.r + B.r)) { ball = B; boff = [m[0] * dx + m[3] * dy + m[6] * dz, m[1] * dx + m[4] * dy + m[7] * dz, m[2] * dx + m[5] * dy + m[8] * dz]; break; }
+          }
+          for (const k of held) { const b = bodies[k]; b.asleep = false; b.sleepCnt = 0; b.koHit = true; }
+          S = { idx: Int32Array.from(idx), off: Float32Array.from(off), held: [...held], ball, boff, k: g.k != null ? g.k : 0.85 };
+          this._grabs.set(g.id, S);
+        }
+        S.a = g.pa || g.p; S.qa = g.qa || g.q; S.b = g.p; S.qb = g.q;
+        for (const k of S.held) { const b = bodies[k]; if (b) { b.asleep = false; b.sleepCnt = 0; } }
+      }
+      for (const id of [...this._grabs.keys()]) if (!live.has(id)) this._grabs.delete(id);
+    }
     // hash cell size
     let maxRad = 0; for (const b of bodies) maxRad = Math.max(maxRad, b.spacing * 0.5);
     const cell = Math.max(2 * maxRad, 1e-3), icell = 1 / cell;
@@ -941,7 +1004,7 @@
     const ppMu = inp.ppFriction != null ? inp.ppFriction : 0.25;
     const dvMax = (inp.dvMax != null ? inp.dvMax : 3.0) * rS, dvMax2 = dvMax * dvMax;
 
-    let useGpu = !!gpuOk && !this.balls.length && !bodies.some(b => (b.kinematic && b.kin && b.kin.sa) || b.drive === this.frame), gpuBack = null;
+    let useGpu = !!gpuOk && !this.balls.length && !this._grabs.size && !bodies.some(b => (b.kinematic && b.kin && b.kin.sa) || b.drive === this.frame), gpuBack = null;
     if (useGpu) {
       // knocked off its feet by a strong field (the CPU path checks this inside its predict step)
       for (let k = 0; k < nbBody; k++) {
@@ -1321,6 +1384,25 @@
           const dx = x[i3] - ancPos[i3], dy = x[i3 + 1] - ancPos[i3 + 1], dz = x[i3 + 2] - ancPos[i3 + 2];
           if (!b.kinematic && dx * dx + dy * dy + dz * dz > lim2) { anc[i] = 0; continue; }
           x[i3] = ancPos[i3]; x[i3 + 1] = ancPos[i3 + 1]; x[i3 + 2] = ancPos[i3 + 2];
+        }
+      }
+
+      // held molecules follow the hand
+      if (this._grabs.size) for (const S of this._grabs.values()) {
+        if (!S.idx.length && !S.ball) continue;
+        const gq = nlerpQ(S.qa, S.qb, tb, [0, 0, 0, 1]), m = quatToMat(gq[0], gq[1], gq[2], gq[3]);
+        const px = S.a[0] + (S.b[0] - S.a[0]) * tb, py = S.a[1] + (S.b[1] - S.a[1]) * tb, pz = S.a[2] + (S.b[2] - S.a[2]) * tb, K = S.k;
+        const idx = S.idx, off = S.off;
+        for (let n = 0; n < idx.length; n++) {
+          const i = idx[n]; if (this.dead[i]) continue;
+          const i3 = 3 * i, ox = off[3 * n], oy = off[3 * n + 1], oz = off[3 * n + 2];
+          x[i3] += (m[0] * ox + m[1] * oy + m[2] * oz + px - x[i3]) * K;
+          x[i3 + 1] += (m[3] * ox + m[4] * oy + m[5] * oz + py - x[i3 + 1]) * K;
+          x[i3 + 2] += (m[6] * ox + m[7] * oy + m[8] * oz + pz - x[i3 + 2]) * K;
+        }
+        if (S.ball) {
+          const B = S.ball, o = S.boff, tx = m[0] * o[0] + m[1] * o[1] + m[2] * o[2] + px, ty = m[3] * o[0] + m[4] * o[1] + m[5] * o[2] + py, tz = m[6] * o[0] + m[7] * o[1] + m[8] * o[2] + pz;
+          B.v[0] = (tx - B.x[0]) * ih; B.v[1] = (ty - B.x[1]) * ih; B.v[2] = (tz - B.x[2]) * ih; B.x[0] = tx; B.x[1] = ty; B.x[2] = tz;
         }
       }
 
@@ -2188,6 +2270,10 @@
           for (const k in out) if (out[k] && out[k].buffer instanceof ArrayBuffer) tr.push(out[k].buffer);
           for (const k in out.skin) if (out.skin[k] && out.skin[k].buffer instanceof ArrayBuffer) tr.push(out.skin[k].buffer);
           self.postMessage({ type: 'shape', id: m.id, out }, tr);
+        } else if (m.type === 'append') {
+          if (gpu && gpu.resident) await gpu.download(eng);
+          const info = eng.append(m.bodies);
+          self.postMessage({ type: 'appended', id: m.id, info });
         } else if (m.type === 'step') {
           let stats;
           const g = wantGpu(m.input.physics) ? await getGpu() : null;
