@@ -27,7 +27,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "37-play-vr3"
+const appVersion = "38-play-vr4"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64
@@ -173,7 +173,9 @@ func launchVR(url string) error {
 	allowVR(profile, url)
 	return exec.Command(exe, "--app="+url+"?vr=1", "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
 		"--window-size=1280,800", "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
-		"--enable-features=WebXR,WebXRHandInput").Start()
+		// the VR runtime (Meta Link / SteamVR) has to load inside the browser's XR process; the sandbox around that
+		// process blocks runtimes that don't support it, which shows up as "session configuration is not supported"
+		"--disable-features=XRSandbox", "--enable-features=WebXR,WebXRHandInput").Start()
 }
 
 // allowVR pre-answers Chrome's "use your virtual reality devices" question for this one local site. The
@@ -245,7 +247,7 @@ func launch(url string) *exec.Cmd {
 			"--disable-renderer-backgrounding",
 			// do not keep running in the background after the window closes
 			"--disable-background-mode",
-			"--disable-features=msEdgeStartupBoost,msEdgeSidebarV2",
+			"--disable-features=msEdgeStartupBoost,msEdgeSidebarV2,XRSandbox",
 			// play mode: VR through whatever OpenXR runtime is active (Quest Link / Meta Horizon Link or SteamVR)
 			"--enable-features=WebXR,WebXRHandInput",
 		)
