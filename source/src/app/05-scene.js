@@ -266,6 +266,7 @@ const SIM = {
           try {
             if (type === 'buildShape') resolve({ out: BLD.buildBody(payload.desc) });
             else if (type === 'build') { const info = this.local.build(payload.data); resolve({ info }); }
+            else if (type === 'append') { const info = this.local.append(payload.bodies); resolve({ info }); }
             else if (type === 'step') {
               const stats = this.local.step(payload.input);
               resolve({ stats, pos: (this.local.outX || this.local.x).slice(), st: this.local.state.slice() });

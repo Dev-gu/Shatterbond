@@ -77,16 +77,29 @@ function dofEnabled(co) {
   return !!(P.dof || FXS.dof) && (P.blur == null || P.blur > 0);
 }
 // distance from the camera to where it is focused: a picked object, a set distance, or the "Looks at" point
-function camFocusDist(co, P) {
-  P = P || camState(co);
-  if (P.focusObj === '@auto') { const d = autofocusDist(co, P); if (d > 0) return d; }
-  const fo = P.focusObj && P.focusObj !== '@auto' ? objById(P.focusObj) : null;
+function focusDistFor(co, P, id) {
+  if (id === '@auto') { const d = autofocusDist(co, P); if (d > 0) return d; }
+  const fo = id && id !== '@auto' ? objById(id) : null;
   if (fo && fo !== co) {
     const a = followAnchor(fo);
     if (a) return Math.max(0.1, Math.hypot(a.x - P.position[0], a.y - P.position[1], a.z - P.position[2]));
   }
   if (P.focusDist > 0) return P.focusDist;
   return Math.max(0.1, Math.hypot(P.target[0] - P.position[0], P.target[1] - P.position[1], P.target[2] - P.position[2]));
+}
+function camFocusDist(co, P) {
+  P = P || camState(co);
+  const d = focusDistFor(co, P, P.focusObj);
+  // a keyframed switch of focus subject: glide from the old subject's distance to the new one over "Focus pull" frames
+  const ks = co.anim && co.anim.focusObj, pull = P.focusPull != null ? +P.focusPull : 12;
+  if (!ks || ks.length < 2 || !(pull > 0)) return d;
+  const f = APP.frame;
+  let i = -1; for (let k = 0; k < ks.length; k++) { if (ks[k].f <= f + 1e-6) i = k; else break; }
+  if (i < 1 || ks[i].v === ks[i - 1].v || f - ks[i].f >= pull) return d;
+  let t = Math.max(0, Math.min(1, (f - ks[i].f) / pull)); t = t * t * (3 - 2 * t);
+  const d0 = focusDistFor(co, P, ks[i - 1].v);
+  // blend in 1/distance (dioptres), the way a lens focus ring moves
+  return 1 / (1 / d0 + (1 / d - 1 / d0) * t);
 }
 // autofocus: a ray straight out of the middle of the camera's view; the focus goes to the first thing it hits
 // (molecules, weapons, props, the floor). Re-measured every frame, so moving the camera or the subject keeps it sharp.

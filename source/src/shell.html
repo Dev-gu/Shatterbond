@@ -161,6 +161,7 @@ button, input, select { font: inherit; color: inherit; }
 .numf.keyed { background: #4a4224; border-color: #6c5f2c; }
 .selectf, .textf { width: 100%; height: 23px; background: var(--bg3); border: 1px solid var(--line2); border-radius: 5px; padding: 0 6px; color: var(--fg); min-width: 0; }
 .selectf:hover, .textf:hover { background: var(--bg4); }
+.selectf.animated { background: #2f3b2f; border-color: #3f5a42; } .selectf.keyed { background: #4a4224; border-color: #6c5f2c; }
 .colorf { width: 100%; height: 23px; border: 1px solid var(--line2); border-radius: 5px; padding: 0; background: none; cursor: pointer; }
 .colorf::-webkit-color-swatch-wrapper { padding: 2px; }
 .colorf::-webkit-color-swatch { border: 0; border-radius: 3px; }
@@ -239,6 +240,25 @@ button, input, select { font: inherit; color: inherit; }
 .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 18px; }
 .keys div { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dashed var(--line); color: var(--fg2); }
 .keys kbd { font: 11px var(--font-num); color: var(--fg); background: var(--bg3); border: 1px solid var(--line2); border-radius: 4px; padding: 0 5px; }
+/* play mode: the viewport fills the window, the editor is hidden underneath */
+body.play-on #viewport { position: fixed !important; inset: 0 !important; z-index: 80; width: auto !important; height: auto !important; }
+body.play-on #viewport > :not(canvas):not(#play-ui):not(#busy) { display: none !important; }
+#play-ui { position: absolute; inset: 0; pointer-events: none; font: 13px/1.4 system-ui, sans-serif; color: #f2f4f7; }
+#play-ui .pl-cross { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 2px #000; }
+#play-ui .pl-cross::after { content: ''; position: absolute; left: 6px; top: 6px; width: 2px; height: 2px; background: #fff; border-radius: 50%; }
+#play-ui .pl-hud { position: absolute; left: 16px; right: 16px; bottom: 14px; text-align: center; text-shadow: 0 1px 3px #000; opacity: .92; }
+#play-ui .pl-hint { position: absolute; left: 0; right: 0; top: 58%; text-align: center; font-size: 16px; text-shadow: 0 1px 4px #000; }
+#play-ui .pl-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; pointer-events: auto; background: rgba(18,20,26,.94); border: 1px solid #333846; border-radius: 14px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+#play-ui .pl-menu[hidden], #play-ui .pl-vr[hidden] { display: none; }
+#play-ui .pl-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+#play-ui .pl-sec { color: #8f96a3; margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+#play-ui .pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+#play-ui .pl-btn { background: #262a33; color: #f2f4f7; border: 1px solid #343a46; border-radius: 8px; padding: 9px 10px; text-align: left; cursor: pointer; font: inherit; }
+#play-ui .pl-btn:hover { background: #323845; }
+#play-ui .pl-btn.on { background: #2d6cdf; border-color: #4a86f0; }
+#play-ui .pl-go { margin-top: 14px; width: 100%; text-align: center; background: #2d6cdf; font-weight: 600; }
+#play-ui .pl-keys { margin-top: 10px; color: #8f96a3; font-size: 12px; }
+#play-ui .pl-vr { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; background: #0d0f14; pointer-events: auto; font-size: 16px; }
 .toast-wrap { position: fixed; left: 50%; top: 46px; transform: translateX(-50%); z-index: 90; display: grid; gap: 6px; pointer-events: none; }
 .toast { background: var(--bg2); border: 1px solid var(--line2); border-left: 3px solid var(--accent); color: var(--fg); padding: 8px 12px; border-radius: 7px; box-shadow: 0 8px 26px rgba(0,0,0,.45); font-size: 12px; max-width: 80vw; }
 .toast.err { border-left-color: var(--danger); }
