@@ -26,7 +26,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "35-play-vr"
+const appVersion = "36-play-vr2"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64
@@ -55,6 +55,17 @@ func main() {
 
 	files := http.FileServer(http.FS(site))
 	mux := http.NewServeMux()
+	mux.HandleFunc("/__openvr", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") {
+			http.Error(w, "no", http.StatusForbidden)
+			return
+		}
+		if err := launchVR(url); err != nil {
+			http.Error(w, "Chrome or Edge was not found", http.StatusNotFound)
+			return
+		}
+		io.WriteString(w, "ok")
+	})
 	mux.HandleFunc("/__alive", func(w http.ResponseWriter, r *http.Request) {
 		lastBeat.Store(time.Now().Unix())
 		w.Header().Set("Cache-Control", "no-store")
@@ -127,6 +138,40 @@ func isOurs(url string) bool {
 	defer r.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(r.Body, 64))
 	return string(b) == "shatterbond"
+}
+
+// findChrome prefers Google Chrome (its WebXR works with every OpenXR runtime), then Edge
+func findChrome() string {
+	roots := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")}
+	for _, rel := range []string{`Google\Chrome\Application\chrome.exe`, `Microsoft\Edge\Application\msedge.exe`} {
+		for _, root := range roots {
+			if root == "" {
+				continue
+			}
+			c := filepath.Join(root, rel)
+			if st, err := os.Stat(c); err == nil && !st.IsDir() {
+				return c
+			}
+		}
+	}
+	return ""
+}
+
+// launchVR opens a second window just for VR play, in Chrome with its own profile
+func launchVR(url string) error {
+	exe := findChrome()
+	if exe == "" {
+		return os.ErrNotExist
+	}
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = os.TempDir()
+	}
+	profile := filepath.Join(base, "Shatterbond", "BrowserVR")
+	os.MkdirAll(profile, 0o755)
+	return exec.Command(exe, "--app="+url+"?vr=1", "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
+		"--window-size=1280,800", "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+		"--enable-features=WebXR,WebXRHandInput").Start()
 }
 
 func findBrowser() string {

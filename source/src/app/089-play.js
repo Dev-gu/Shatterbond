@@ -42,9 +42,10 @@ async function enterPlay(mode) {
   if (PLAY.on) { if (mode === 'vr' && !PLAY.xr) startXR(); return; }
   let pending = null;
   if (mode === 'vr') {
-    const ok = navigator.xr && await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
-    if (!ok) { toast(navigator.xr ? 'No VR headset found. Start Quest Link (or SteamVR) and put the headset on, then press VR again.' : 'This browser window has no VR support. Open Shatterbond in Chrome or Edge (the desktop app does this).', true); return; }
-    pending = playRequestXR(); pending.catch(() => {});
+    if (!navigator.xr) { playVRHelp('This window has no WebXR (VR) support.'); return; }
+    pending = playRequestXR(); pending.catch(() => {}); // asked for straight away: the browser only allows it during the click
+    let ok = false; try { ok = await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { ok = false; }
+    if (!ok) { pending.then(s => s.end()).catch(() => {}); playVRHelp('The browser reports no VR headset (immersive-vr is not supported here).'); return; }
   }
   if (APP.recording) return toast('Finish the video render first', true);
   if (APP.playing) togglePlay();
@@ -514,7 +515,7 @@ async function startXR(pending) {
   let session;
   try {
     session = await (pending || playRequestXR());
-  } catch (err) { toast('Could not start VR: ' + err.message + '. Is Quest Link (or SteamVR) running?', true); return; }
+  } catch (err) { playVRHelp('The headset refused the VR session: ' + (err && (err.name + ': ' + err.message))); return; }
   if (!PLAY.on) { session.end().catch(() => {}); return; }
   if (document.pointerLockElement) document.exitPointerLock();
   playToggleMenu(false);
@@ -757,4 +758,40 @@ function playXRInput(dt) {
     }
     h.prev = gp.buttons.map(b => b.pressed);
   }
+}
+
+/* ---------- when VR does not start: say exactly why, and offer the Chrome window ---------- */
+function playVRHelp(reason) {
+  console.warn('VR:', reason);
+  const old = document.getElementById('vr-help'); if (old) old.remove();
+  const box = el('div', { id: 'vr-help', class: 'modal-bg' });
+  const card = el('div', { class: 'modal', style: { maxWidth: '560px' } });
+  card.innerHTML = `<div class="modal-h"><h2>VR didn't start</h2></div><div class="modal-b"><p><b>Why:</b> <span id="vr-why"></span></p>
+    <p>Check that the headset is in Quest Link or Air Link (the Link home) before you press VR.</p>
+    <p>If Link is running and this still appears, open VR in a Chrome window. Chrome's VR support works with Link.</p>
+    <p style="color:var(--fg3);font-size:11.5px">Browser: <span id="vr-ua"></span> · WebXR: ${navigator.xr ? 'yes' : 'no'} · secure: ${window.isSecureContext ? 'yes' : 'no'} · in frame: ${window.top !== window ? 'yes' : 'no'}</p></div>
+    <div class="modal-f"><button class="btn" id="vr-close">Close</button><button class="btn" id="vr-retry">Try again</button><button class="btn primary" id="vr-chrome">Open VR in Chrome</button></div>`;
+  box.append(card); document.body.append(box);
+  card.querySelector('#vr-why').textContent = reason;
+  card.querySelector('#vr-ua').textContent = (navigator.userAgentData && navigator.userAgentData.brands ? navigator.userAgentData.brands.map(b => b.brand + ' ' + b.version).filter(t => !/Not/.test(t)).join(', ') : navigator.userAgent).slice(0, 120);
+  const close = () => box.remove();
+  card.querySelector('#vr-close').onclick = close;
+  card.querySelector('#vr-retry').onclick = () => { close(); enterPlay('vr'); };
+  card.querySelector('#vr-chrome').onclick = async () => {
+    try {
+      const r = await fetch('/__openvr', { method: 'POST' });
+      if (!r.ok) throw new Error(await r.text());
+      close(); toast('Opening a Chrome window for VR. Press "Enter VR" in it.');
+    } catch (e) { toast('Could not open Chrome from here. With Shatterbond.exe running, paste http://127.0.0.1:47231/?vr=1 into Chrome.', true); }
+  };
+}
+// the VR window opened by the desktop app (?vr=1): straight into the arena with one big button (VR needs a click to start)
+function playVRBoot() {
+  if (!/[?&]vr=1/.test(location.search)) return;
+  setTimeout(() => {
+    enterPlay('fps').then(() => {});
+    const b = el('button', { class: 'btn primary', style: { position: 'fixed', left: '50%', top: '40%', transform: 'translate(-50%,-50%)', zIndex: 96, fontSize: '22px', height: 'auto', padding: '18px 34px' } }, 'Enter VR');
+    b.onclick = (e) => { e.stopPropagation(); b.remove(); enterPlay('vr'); };
+    document.body.append(b);
+  }, 600);
 }

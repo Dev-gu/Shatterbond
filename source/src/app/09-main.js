@@ -891,6 +891,7 @@ function boot() {
   window.addEventListener('beforeunload', autosave);
   requestAnimationFrame(frameLoop);
   REMOTE.init();
+  playVRBoot();
   setTimeout(() => {
     if (restored) toast('Restored your last session');
     else toast('Press Space to play the hammer demo. More demos are in the Scenes menu.');
