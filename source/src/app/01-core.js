@@ -163,11 +163,11 @@ const G_MOLECULAR = (humanoid) => ({ id: 'molecular', title: humanoid ? 'Body ph
   F('release', 'Physics from frame', 'int', { min: -1, max: 100000, step: 1, noanim: true, help: 'Before this frame the body follows its keyframes, then physics takes over. -1 is automatic: a body with keyframed location or rotation follows them until its last key, otherwise physics runs from the start.' }),
   F('velocity', 'Launch velocity', 'vec3', { step: 0.5, unit: 'm/s', noanim: true }),
 ] });
-const BODY_TYPES = { adult: { height: 1.8, fat: 0.2, build: 0.6 }, child: { height: 1.25, fat: 0.25, build: 0.3 }, heavy: { height: 1.78, fat: 0.8, build: 0.5 }, dog: { height: 0.62, fat: 0.3 }, horse: { height: 1.6, fat: 0.3 } };
+const BODY_TYPES = { adult: { height: 1.8, fat: 0.2, build: 0.6 }, child: { height: 1.25, fat: 0.25, build: 0.3 }, heavy: { height: 1.78, fat: 0.8, build: 0.5 }, dog: { height: 0.62, fat: 0.3 }, horse: { height: 1.6, fat: 0.3 }, super: { height: 1.85, fat: 0.12, build: 0.9 } };
 const G_BODY = { id: 'body', title: 'Body', fields: [
-  F('bodyType', 'Body type', 'select', { options: [['adult', 'Adult'], ['child', 'Child'], ['heavy', 'Heavier build'], ['dog', 'Dog'], ['horse', 'Horse']], noanim: true,
+  F('bodyType', 'Body type', 'select', { options: [['adult', 'Adult'], ['child', 'Child'], ['heavy', 'Heavier build'], ['super', 'Superhuman'], ['dog', 'Dog'], ['horse', 'Horse']], noanim: true,
     onSet: (o, v) => { const D = BODY_TYPES[v]; if (D) for (const k in D) setProp(o, k, D[k]); if (v === 'dog' || v === 'horse') { setProp(o, 'pose', 'stand'); if (o.name === 'Humanoid' || /^Humanoid/.test(o.name)) o.name = v === 'dog' ? 'Dog' : 'Horse'; } },
-    help: 'Same molecular body system for every type. Choosing one sets a typical height and build, which you can still change.' }),
+    help: 'Same molecular body system for every type. Choosing one sets a typical height and build, which you can still change. Superhuman: flesh and bone about 40 times tougher, almost never knocked out, and anything it hits at speed (a headbutt, a punch, a knee) tears apart.' }),
   F('model', 'Body model', 'select', { options: [['anatomical', 'Anatomical (realistic)'], ['sculpt', 'Classic sculpt']], noanim: true, help: 'Anatomical is a realistic human body (from the CC0 MakeHuman base mesh). Classic is the earlier hand-built sculpt.' }),
   F('pose', 'Pose', 'select', { options: POSE_OPTS }),
   F('height', 'Height', 'num', { min: 0.5, max: 3, step: 0.01, unit: 'm', noanim: true }),
@@ -184,7 +184,7 @@ const G_ANIM = { id: 'anim', title: 'Animation', fields: [
   F('animSpeed', 'Speed', 'num', { min: 0.1, max: 4, step: 0.05, help: 'Plays the animation faster or slower.' }),
   F('animLoop', 'Loop', 'bool', { noanim: true }),
   F('animMove', 'Walk forward', 'bool', { noanim: true, help: 'Walking and running carry the body forward (in the direction it faces).' }),
-  F('react', 'React to hits', 'bool', { noanim: true, help: 'When something touches the animated body, physics takes over and it reacts from the pose it is in.' }),
+  F('react', 'React to hits', 'bool', { noanim: true, help: 'When something hits the animated body, physics takes over and it reacts from the pose it is in. Touching someone itself (a punch or headbutt landing) does not stop the animation: it plays through and shoves them.' }),
   F('animDrive', 'Keep animating after a hit', 'bool', { noanim: true, help: 'After physics takes over, the body keeps doing its animation with its muscles while it is pushed and hit (an active ragdoll), until a hard hit knocks it out. Off: it holds the pose it was in.' }),
   F('braceDanger', 'Flinch from danger', 'bool', { noanim: true, help: 'Raises the arms to shield the head when a weapon comes close.' }),
   F('importClip', 'Mixamo clip', 'button', { noanim: true, text: 'Import FBX…', action: () => importMixamo(), help: 'Download an animation from mixamo.com as FBX (any skin option, 30 fps) and import it here, or drop the files onto the window. It plays on this body, fingers included, and is saved so every scene can use it (Animation menu > Saved animations).' }),

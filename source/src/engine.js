@@ -26,6 +26,7 @@
 
   /* ---------- build ---------- */
   Engine.prototype.build = function (d) {
+    this._desc = d;
     let N = 0, B = 0;
     for (const b of d.bodies) { N += b.count; B += b.bondRest.length; }
     this.N = N; this.B = B;
@@ -133,6 +134,32 @@
     return { N, B };
   };
 
+  /* ---------- append bodies to a running simulation (play mode spawns) ----------
+   * Rebuilds with the old bodies plus the new ones, then copies every per-molecule / per-bond state array back
+   * over the old part: new molecules and bonds are appended at the end, so old indices keep their meaning. */
+  const APPEND_SKIP = new Set(['hcount', 'hentries', 'hlist', 'uf', 'uf2', 'uf3', 'adjStart', 'adj']);
+  const APPEND_DROP = ['piece', 'cvn', 'hbm', 'hcc', 'hec', 'hcf', 'hef', '_cbox', 'xlk', 'outX', '_xb', '_slow', 'colPrev'];
+  Engine.prototype.append = function (newBodies) {
+    const old = {}; for (const k of Object.keys(this)) old[k] = this[k];
+    for (const s of this._desc.bodies) s._anc0 = undefined; // build pushes anchors into this; old bodies keep their own list
+    const d = Object.assign({}, this._desc, { bodies: this._desc.bodies.concat(newBodies), startFrame: this.frame });
+    this.build(d);
+    for (const k in old) {
+      const a = old[k], b = this[k];
+      if (ArrayBuffer.isView(a)) {
+        if (APPEND_SKIP.has(k)) continue;
+        if (ArrayBuffer.isView(b) && b.constructor === a.constructor && b.length >= a.length && b !== a) b.set(a);
+        continue;
+      }
+      if (['N', 'B', 'bodies', 'hsize', 'LMAX', '_desc', '_serial', 'boneT', 'cartT'].includes(k)) continue;
+      this[k] = a;
+    }
+    this.bodies = old.bodies.concat(this.bodies.slice(old.bodies.length));
+    for (const k of APPEND_DROP) this[k] = null;
+    this._bxDirty = true; this._serial = (old._serial || 0) + 1;
+    return { N: this.N, B: this.B };
+  };
+
   /* ---------- helpers ---------- */
   function quatToMat(x, y, z, w) {
     const xx = x * x, yy = y * y, zz = z * z, xy = x * y, xz = x * z, yz = y * z, wx = w * x, wy = w * y, wz = w * z;
@@ -201,7 +228,7 @@
       this.cand[this.bi[b]] = 1; this.cand[this.bj[b]] = 1;
       this.statBroken++; any = true;
     }
-    if (any) { this.bodies[this.pb[i]].dirty = true; this._bxDirty = true; }
+    if (any) { this.bodies[this.pb[i]].dirty = true; this._bxDirty = true; this.candVer = (this.candVer || 0) + 1; }
     this.anc[i] = 0;
   };
 
@@ -682,17 +709,29 @@
     if (others.length && hp) {
       // another body's molecules near where this one's will be at the end of the frame (not where they are now: a
       // running or jumping body covers several centimetres a frame and would already be inside the other one)
-      const x = this.x, CS = 0.06, inv = 1 / CS, H = new Map(), key = (a, c, d) => (a * 73856093) ^ (c * 19349663) ^ (d * 83492791);
+      const x = this.x, v = this.v, hitV = Math.min(b.koSpeed || 2.5, Engine.HITBYV), CS = 0.06, inv = 1 / CS, H = new Map(), key = (a, c, d) => (a * 73856093) ^ (c * 19349663) ^ (d * 83492791);
       for (let q = 0; q < hp.length; q += 3) { const k = key(Math.floor(hp[q] * inv), Math.floor(hp[q + 1] * inv), Math.floor(hp[q + 2] * inv)); let L = H.get(k); if (!L) H.set(k, L = []); L.push(q); }
       const reach = Math.max(0.035, 2.2 * b.spacing), r2 = reach * reach;
+      // closing speed averaged over the whole contact patch: single molecules of flesh it is shoving bounce about
+      let cvS = 0, cvN = 0;
       for (const o of others) for (let j = o.start, e = o.start + o.count; j < e; j += 2) {
         if (this.dead[j]) continue;
         const j3 = 3 * j, px = x[j3], py = x[j3 + 1], pz = x[j3 + 2], cx = Math.floor(px * inv), cy = Math.floor(py * inv), cz = Math.floor(pz * inv);
         for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (let d = -1; d <= 1; d++) {
           const L = H.get(key(cx + a, cy + c, cz + d)); if (!L) continue;
-          for (const q of L) { const dx = hp[q] - px, dy = hp[q + 1] - py, dz = hp[q + 2] - pz; if (dx * dx + dy * dy + dz * dz < r2) { if (o.asleep) o.asleep = false; return true; } }
+          for (const q of L) {
+            const dx = hp[q] - px, dy = hp[q + 1] - py, dz = hp[q + 2] - pz, dd = dx * dx + dy * dy + dz * dz;
+            if (dd >= r2) continue;
+            if (o.asleep) o.asleep = false; // it is about to be touched, so it has to take part in contacts
+            // this body is the one doing the touching (a headbutt, a punch landing on someone standing there): it stays
+            // on its animation and shoves the other body, feet planted. Only the other body coming at it (another
+            // animated body, or one flying, falling or swinging into it faster than would knock it out) makes it react
+            if (o.kinematic && o.kin && o.kin.sb) return true;
+            const d = Math.sqrt(dd) || 1; cvS += (v[j3] * dx + v[j3 + 1] * dy + v[j3 + 2] * dz) / d; cvN++;
+          }
         }
       }
+      if (cvN && cvS / cvN > hitV) return true;
     }
     return false;
   };
@@ -864,7 +903,9 @@
           const d = Math.sqrt(d2) || 1e-6, f = F.strength * (1 - d / R);
           if (f > b.koSpeed) b.koHit = true;
           const jit = 0.75 + 0.5 * hash32(i * 7 + this.frame);
-          v[i3] += dx / d * f * jit; v[i3 + 1] += (dy / d * f + f * (F.lift || 0)) * jit; v[i3 + 2] += dz / d * f * jit;
+          if (F.dir) { // a bullet: mostly along its path, with a little spray outwards
+            const D = F.dir; v[i3] += (D[0] * 0.8 + dx / d * 0.35) * f * jit; v[i3 + 1] += (D[1] * 0.8 + dy / d * 0.35) * f * jit; v[i3 + 2] += (D[2] * 0.8 + dz / d * 0.35) * f * jit;
+          } else { v[i3] += dx / d * f * jit; v[i3 + 1] += (dy / d * f + f * (F.lift || 0)) * jit; v[i3 + 2] += dz / d * f * jit; }
           if (d < dmgR && hash32(i * 13 + 5) < (1 - d / dmgR) * 1.6) this._breakParticle(i);
         }
       }
@@ -920,6 +961,40 @@
       if (!b.kinematic || !b.kin || !b.kin.sb || !b.params.react) continue;
       if (this._animHit(b, cols, ctype, cdim, fields)) { b.animOff = true; b.kin = null; this._release(b, true); }
     }
+    // grabs (play mode hands): a closing hand takes hold of the molecules (and loose balls) inside it; they then
+    // follow the hand rigidly every substep, so a held limb swings with it and pulls hard enough to tear off
+    if (!this._grabs) this._grabs = new Map();
+    {
+      const G = inp.grabs || [], live = new Set();
+      for (const g of G) {
+        live.add(g.id);
+        let S = this._grabs.get(g.id);
+        if (!S) {
+          const m = quatToMat(g.q[0], g.q[1], g.q[2], g.q[3]), r2 = g.r * g.r, idx = [], off = [], held = new Set();
+          for (let k = 0; k < nbBody; k++) {
+            const b = bodies[k]; if (b.kinematic || !sphereAabb(g.p[0], g.p[1], g.p[2], g.r, b.aabb)) continue;
+            for (let i = b.start, e = b.start + b.count; i < e; i++) {
+              if (w[i] === 0 || this.dead[i]) continue;
+              const i3 = 3 * i, dx = x[i3] - g.p[0], dy = x[i3 + 1] - g.p[1], dz = x[i3 + 2] - g.p[2];
+              if (dx * dx + dy * dy + dz * dz > r2) continue;
+              idx.push(i); off.push(m[0] * dx + m[3] * dy + m[6] * dz, m[1] * dx + m[4] * dy + m[7] * dz, m[2] * dx + m[5] * dy + m[8] * dz);
+              held.add(k);
+            }
+          }
+          let ball = null, boff = null;
+          if (!idx.length) for (const B of this.balls) {
+            const dx = B.x[0] - g.p[0], dy = B.x[1] - g.p[1], dz = B.x[2] - g.p[2];
+            if (dx * dx + dy * dy + dz * dz < (g.r + B.r) * (g.r + B.r)) { ball = B; boff = [m[0] * dx + m[3] * dy + m[6] * dz, m[1] * dx + m[4] * dy + m[7] * dz, m[2] * dx + m[5] * dy + m[8] * dz]; break; }
+          }
+          for (const k of held) { const b = bodies[k]; b.asleep = false; b.sleepCnt = 0; b.koHit = true; }
+          S = { idx: Int32Array.from(idx), off: Float32Array.from(off), held: [...held], ball, boff, k: g.k != null ? g.k : 0.85 };
+          this._grabs.set(g.id, S);
+        }
+        S.a = g.pa || g.p; S.qa = g.qa || g.q; S.b = g.p; S.qb = g.q;
+        for (const k of S.held) { const b = bodies[k]; if (b) { b.asleep = false; b.sleepCnt = 0; } }
+      }
+      for (const id of [...this._grabs.keys()]) if (!live.has(id)) this._grabs.delete(id);
+    }
     // hash cell size
     let maxRad = 0; for (const b of bodies) maxRad = Math.max(maxRad, b.spacing * 0.5);
     const cell = Math.max(2 * maxRad, 1e-3), icell = 1 / cell;
@@ -929,7 +1004,7 @@
     const ppMu = inp.ppFriction != null ? inp.ppFriction : 0.25;
     const dvMax = (inp.dvMax != null ? inp.dvMax : 3.0) * rS, dvMax2 = dvMax * dvMax;
 
-    let useGpu = !!gpuOk && !this.balls.length && !bodies.some(b => (b.kinematic && b.kin && b.kin.sa) || b.drive === this.frame), gpuBack = null;
+    let useGpu = !!gpuOk && !this.balls.length && !this._grabs.size && !bodies.some(b => (b.kinematic && b.kin && b.kin.sa) || b.drive === this.frame), gpuBack = null;
     if (useGpu) {
       // knocked off its feet by a strong field (the CPU path checks this inside its predict step)
       for (let k = 0; k < nbBody; k++) {
@@ -1257,20 +1332,7 @@
       // bonds
       for (let k = 0; k < nbBody; k++) {
         const b = bodies[k]; if (b.asleep || b.kinematic) continue;
-        const stiff = b.stiff;
-        for (let q = b.bstart, e = b.bstart + b.bcount; q < e; q++) {
-          if (bx[q]) continue;
-          const i = bi[q], j = bj[q], i3 = 3 * i, j3 = 3 * j;
-          const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2];
-          const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          const rest = br[q];
-          const C = L - rest;
-          const wi = w[i], wj = w[j], ws = wi + wj;
-          if (ws === 0 || L < 1e-9) continue;
-          const sc = stiff * bk[q] * C / (L * ws);
-          x[i3] += wi * sc * dx; x[i3 + 1] += wi * sc * dy; x[i3 + 2] += wi * sc * dz;
-          x[j3] -= wj * sc * dx; x[j3 + 1] -= wj * sc * dy; x[j3 + 2] -= wj * sc * dz;
-        }
+        this._bondPass(b.bstart, b.bstart + b.bcount, b.stiff);
       }
 
       // goo links
@@ -1305,7 +1367,7 @@
         const cutK = b.cutF != null ? 1 + 1.2 * Math.min(1, (this.frame - b.cutF) * tsK / 60) : 1;
         if (tone > 0.001 && b.poseClusters.length) this._shapeMatch(b.poseClusters, kAdj(Math.min(1, tone * tone * 0.5 * cutK)), false, 0, 12 + (Engine.KOCTW - 12) * b.ko, Engine.KODAMP * b.ko);
         // squeezed or bent far out of its pose (a press, a wall pin) the body gives way instead of standing like a statue
-        if (!b.koHit && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
+        if (!b.koHit && !b.params.rend && b.poseClusters.length && this._smRes > 0.0016) b.koHit = true;
         if (b.skeleton) this._shapeMatch(b.clusters, 0.85, false, b.firm);
         else if (b.softSeg) this._shapeMatch(b.clusters, kAdj(b.firm), true, 0, 12 + (Engine.KOCTW - 12) * b.ko);
         else if (b.rig > 0) this._shapeMatch(b.clusters, Math.min(1, b.rig * b.rig * 0.9), true);
@@ -1322,6 +1384,25 @@
           const dx = x[i3] - ancPos[i3], dy = x[i3 + 1] - ancPos[i3 + 1], dz = x[i3 + 2] - ancPos[i3 + 2];
           if (!b.kinematic && dx * dx + dy * dy + dz * dz > lim2) { anc[i] = 0; continue; }
           x[i3] = ancPos[i3]; x[i3 + 1] = ancPos[i3 + 1]; x[i3 + 2] = ancPos[i3 + 2];
+        }
+      }
+
+      // held molecules follow the hand
+      if (this._grabs.size) for (const S of this._grabs.values()) {
+        if (!S.idx.length && !S.ball) continue;
+        const gq = nlerpQ(S.qa, S.qb, tb, [0, 0, 0, 1]), m = quatToMat(gq[0], gq[1], gq[2], gq[3]);
+        const px = S.a[0] + (S.b[0] - S.a[0]) * tb, py = S.a[1] + (S.b[1] - S.a[1]) * tb, pz = S.a[2] + (S.b[2] - S.a[2]) * tb, K = S.k;
+        const idx = S.idx, off = S.off;
+        for (let n = 0; n < idx.length; n++) {
+          const i = idx[n]; if (this.dead[i]) continue;
+          const i3 = 3 * i, ox = off[3 * n], oy = off[3 * n + 1], oz = off[3 * n + 2];
+          x[i3] += (m[0] * ox + m[1] * oy + m[2] * oz + px - x[i3]) * K;
+          x[i3 + 1] += (m[3] * ox + m[4] * oy + m[5] * oz + py - x[i3 + 1]) * K;
+          x[i3 + 2] += (m[6] * ox + m[7] * oy + m[8] * oz + pz - x[i3 + 2]) * K;
+        }
+        if (S.ball) {
+          const B = S.ball, o = S.boff, tx = m[0] * o[0] + m[1] * o[1] + m[2] * o[2] + px, ty = m[3] * o[0] + m[4] * o[1] + m[5] * o[2] + py, tz = m[6] * o[0] + m[7] * o[1] + m[8] * o[2] + pz;
+          B.v[0] = (tx - B.x[0]) * ih; B.v[1] = (ty - B.x[1]) * ih; B.v[2] = (tz - B.x[2]) * ih; B.x[0] = tx; B.x[1] = ty; B.x[2] = tz;
         }
       }
 
@@ -1342,47 +1423,9 @@
       const cvn = this.cvn;
       for (let k = 0; k < nbBody; k++) {
         const b = bodies[k]; if (b.asleep) continue;
-        let ms = 0;
-        for (let i = b.start, e = b.start + b.count; i < e; i++) {
-          const i3 = 3 * i;
-          if (w[i] === 0 && !b.kinematic) { v[i3] = v[i3 + 1] = v[i3 + 2] = 0; continue; }
-          let vx = (x[i3] - xp[i3]) * ih, vy = (x[i3 + 1] - xp[i3 + 1]) * ih, vz = (x[i3 + 2] - xp[i3 + 2]) * ih;
-          if (ct[i] < 2 && !b.kinematic) {
-            // constraint fights must not launch particles: cap the velocity change a substep can add
-            const dvx = vx - v[i3], dvy = vy - v[i3 + 1], dvz = vz - v[i3 + 2];
-            const d2 = dvx * dvx + dvy * dvy + dvz * dvz;
-            if (d2 > dvMax2) { const f = Math.sqrt(dvMax2 / d2); vx = v[i3] + dvx * f; vy = v[i3 + 1] + dvy * f; vz = v[i3 + 2] + dvz * f; }
-          } else if (cvn && cvn[i] > 0 && !b.kinematic) {
-            // hit by another body: the hit may change the speed by up to the closing speed (a thrown stone still
-            // sends flesh flying), but not by the size of the overlap push, which at many substeps read as 15+ m/s
-            const dvx = vx - v[i3], dvy = vy - v[i3 + 1], dvz = vz - v[i3 + 2];
-            const d2 = dvx * dvx + dvy * dvy + dvz * dvz, lim = Math.max(dvMax, 1.2 * cvn[i]);
-            if (d2 > lim * lim) { const f = lim / Math.sqrt(d2); vx = v[i3] + dvx * f; vy = v[i3 + 1] + dvy * f; vz = v[i3 + 2] + dvz * f; }
-            // and never ends up faster than it was or than the hit came in (repeated pushes over several substeps added up)
-            const s0 = Math.hypot(v[i3], v[i3 + 1], v[i3 + 2]), sMax = Math.max(s0, 1.2 * cvn[i]), s1 = Math.hypot(vx, vy, vz);
-            if (s1 > sMax) { const f = sMax / s1; vx *= f; vy *= f; vz *= f; }
-            cvn[i] = 0;
-          }
-          const s2 = vx * vx + vy * vy + vz * vz;
-          if (s2 > MAXV * MAXV) { const f = MAXV / Math.sqrt(s2); vx *= f; vy *= f; vz *= f; }
-          else if (s2 > ms) ms = s2;
-          v[i3] = vx; v[i3 + 1] = vy; v[i3 + 2] = vz;
-        }
-        b.maxSpeed = Math.sqrt(ms);
+        b.maxSpeed = this._velPass(b.start, b.start + b.count, !!b.kinematic, ih, dvMax, dvMax2);
         // internal damping: bonds resist the speed at which they stretch, so flesh wobbles and settles instead of ringing
-        if (b.damp > 0 && !b.kinematic) {
-          const kd = b.damp;
-          for (let q = b.bstart, e = b.bstart + b.bcount; q < e; q++) {
-            if (bx[q]) continue;
-            const i = bi[q], j = bj[q], i3 = 3 * i, j3 = 3 * j;
-            const wi = w[i], wj = w[j], ws = wi + wj; if (ws === 0) continue;
-            const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2];
-            const il = 1 / (Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9), nx = dx * il, ny = dy * il, nz = dz * il;
-            const dv = ((v[j3] - v[i3]) * nx + (v[j3 + 1] - v[i3 + 1]) * ny + (v[j3 + 2] - v[i3 + 2]) * nz) * kd / ws;
-            v[i3] += wi * dv * nx; v[i3 + 1] += wi * dv * ny; v[i3 + 2] += wi * dv * nz;
-            v[j3] -= wj * dv * nx; v[j3 + 1] -= wj * dv * ny; v[j3 + 2] -= wj * dv * nz;
-          }
-        }
+        if (b.damp > 0 && !b.kinematic) this._dampPass(b.bstart, b.bstart + b.bcount, b.damp);
       }
     }
     for (let c = 0; c < nc; c++) if (cB[c] < Infinity && cP[c] > 0) this.colMom.set(cols[c]._id, { P: cP[c], f: this.frame });
@@ -1566,7 +1609,7 @@
     if (this.balls.length) { balls = { keys: this.balls.map(B => B.key), data: new Float32Array(this.balls.length * 7) }; this.balls.forEach((B, k) => { balls.data.set([B.x[0], B.x[1], B.x[2], B.q[0], B.q[1], B.q[2], B.q[3]], 7 * k); }); }
     // bodies still posed by their skeleton at the end of this frame (the renderer skins them straight from the bones)
     const kin = []; for (let k = 0; k < bodies.length; k++) { const b = bodies[k]; if (b.kinematic && b.kin && b.kin.sa) kin.push(k); }
-    return { ms: t1 - t0, awake, broken: this.statBroken, bonds: this.B, links: this.lcount, events, balls, kin };
+    return { ms: t1 - t0, awake, broken: this.statBroken, bonds: this.B, links: this.lcount, events, balls, kin, bst: bodies.map(b => [b.kinematic ? 1 : 0, b.animOff ? 1 : 0, b.balLost ? 1 : 0, +(b.ko || 0).toFixed(2), b.drive === this.frame ? 1 : 0, b.dbgWhy || ''].join(',')) };
   };
 
   Engine.prototype._step1 = function (inp) { this.outX = null; return this._stepGen(inp, false).next().value; };
@@ -1650,7 +1693,7 @@
   Engine.COLDENS = 1500; // kg/m^3 for animated colliders
   Engine.SPIKEGRIP = typeof process !== 'undefined' && process.env && process.env.SPIKEGRIP ? +process.env.SPIKEGRIP : 1;
   Engine.LIGHTM = 150; // kg: heavier colliders (hammers, rams, presses) still act as unstoppable
-  Engine.BALANCE = 30; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
+  Engine.BALANCE = 30; Engine.HITBYV = 2.5; Engine.RENDV = 1.2; Engine.THRUCUT = 0.5; Engine.CUTMU = 0.12;
   Engine.DRIVE_EASE = 0.35; // share of the way to the animated shape the muscles move each frame // 1/s²: how hard a driven (hit but still animated) body holds its animated stance
   Engine.RELVMAX = 4; // m/s: fastest a limb may move relative to its body when physics takes over from an animation
   Engine.FASTV = 6; // m/s: only faster colliders have a momentum budget
@@ -1660,6 +1703,70 @@
   Engine.BLUNTX = typeof process !== 'undefined' && process.env && process.env.BLUNTX ? +process.env.BLUNTX : 1.8;
   Engine.SWEEPMAX = 24; // most slices per substep for swept collision
   Engine.KODAMP = typeof process !== 'undefined' && process.env && process.env.KODAMP ? +process.env.KODAMP : 0.6;
+  // solver passes kept as small functions so the JS engine optimizes them once and keeps them optimized
+  // (inside the per-frame step generator they were recompiled again and again, and contact frames ran them slowly)
+  Engine.prototype._bondPass = function (q0, q1, stiff) {
+    const x = this.x, w = this.w, bx = this.bx, bi = this.bi, bj = this.bj, br = this.br, bk = this.bk;
+    for (let q = q0; q < q1; q++) {
+      if (bx[q]) continue;
+      const i = bi[q], j = bj[q], i3 = 3 * i, j3 = 3 * j;
+      const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2];
+      const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const rest = br[q];
+      const C = L - rest;
+      const wi = w[i], wj = w[j], ws = wi + wj;
+      if (ws === 0 || L < 1e-9) continue;
+      const sc = stiff * bk[q] * C / (L * ws);
+      x[i3] += wi * sc * dx; x[i3 + 1] += wi * sc * dy; x[i3 + 2] += wi * sc * dz;
+      x[j3] -= wj * sc * dx; x[j3 + 1] -= wj * sc * dy; x[j3 + 2] -= wj * sc * dz;
+    }
+  };
+  // velocities from the substep's motion; returns the body's top speed
+  Engine.prototype._velPass = function (i0, i1, kinematic, ih, dvMax, dvMax2) {
+    const x = this.x, xp = this.xp, v = this.v, w = this.w, ct = this.ct, cvn = this.cvn;
+    let ms = 0;
+    for (let i = i0; i < i1; i++) {
+      const i3 = 3 * i;
+      if (w[i] === 0 && !kinematic) { v[i3] = v[i3 + 1] = v[i3 + 2] = 0; continue; }
+      let vx = (x[i3] - xp[i3]) * ih, vy = (x[i3 + 1] - xp[i3 + 1]) * ih, vz = (x[i3 + 2] - xp[i3 + 2]) * ih;
+      if (ct[i] < 2 && !kinematic) {
+        // constraint fights must not launch particles: cap the velocity change a substep can add
+        const dvx = vx - v[i3], dvy = vy - v[i3 + 1], dvz = vz - v[i3 + 2];
+        const d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+        if (d2 > dvMax2) { const f = Math.sqrt(dvMax2 / d2); vx = v[i3] + dvx * f; vy = v[i3 + 1] + dvy * f; vz = v[i3 + 2] + dvz * f; }
+      } else if (cvn && cvn[i] > 0 && !kinematic) {
+        // hit by another body: the hit may change the speed by up to the closing speed (a thrown stone still
+        // sends flesh flying), but not by the size of the overlap push, which at many substeps read as 15+ m/s
+        const dvx = vx - v[i3], dvy = vy - v[i3 + 1], dvz = vz - v[i3 + 2];
+        const d2 = dvx * dvx + dvy * dvy + dvz * dvz, lim = Math.max(dvMax, 1.2 * cvn[i]);
+        if (d2 > lim * lim) { const f = lim / Math.sqrt(d2); vx = v[i3] + dvx * f; vy = v[i3 + 1] + dvy * f; vz = v[i3 + 2] + dvz * f; }
+        // and never ends up faster than it was or than the hit came in (repeated pushes over several substeps added up)
+        const s0 = Math.hypot(v[i3], v[i3 + 1], v[i3 + 2]), sMax = Math.max(s0, 1.2 * cvn[i]), s1 = Math.hypot(vx, vy, vz);
+        if (s1 > sMax) { const f = sMax / s1; vx *= f; vy *= f; vz *= f; }
+        cvn[i] = 0;
+      }
+      const s2 = vx * vx + vy * vy + vz * vz;
+      if (s2 > MAXV * MAXV) { const f = MAXV / Math.sqrt(s2); vx *= f; vy *= f; vz *= f; }
+      else if (s2 > ms) ms = s2;
+      v[i3] = vx; v[i3 + 1] = vy; v[i3 + 2] = vz;
+    }
+    return Math.sqrt(ms);
+  };
+  // internal damping along intact bonds
+  Engine.prototype._dampPass = function (q0, q1, kd) {
+    const x = this.x, v = this.v, w = this.w, bx = this.bx, bi = this.bi, bj = this.bj;
+    for (let q = q0; q < q1; q++) {
+      if (bx[q]) continue;
+      const i = bi[q], j = bj[q], i3 = 3 * i, j3 = 3 * j;
+      const wi = w[i], wj = w[j], ws = wi + wj; if (ws === 0) continue;
+      const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2];
+      const il = 1 / (Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9), nx = dx * il, ny = dy * il, nz = dz * il;
+      const dv = ((v[j3] - v[i3]) * nx + (v[j3 + 1] - v[i3 + 1]) * ny + (v[j3 + 2] - v[i3 + 2]) * nz) * kd / ws;
+      v[i3] += wi * dv * nx; v[i3 + 1] += wi * dv * ny; v[i3 + 2] += wi * dv * nz;
+      v[j3] -= wj * dv * nx; v[j3 + 1] -= wj * dv * ny; v[j3 + 2] -= wj * dv * nz;
+    }
+  };
+
   Engine.prototype._shapeMatch = function (cls, ksm, perParticle, kfol, ctw, damp) {
     if (ctw == null) ctw = 12;
     const xp = this.xp, dmp = damp || 0;
@@ -1885,86 +1992,203 @@
     const hs = this.hsize, mask = hs - 1, hc = this.hcount, he = this.hentries, hl = this.hlist;
     const bodies = this.bodies, pb = this.pb, xb = this._xb;
     hc.fill(0);
-    let n = 0;
+    // which bodies have molecules in each block of cells (one bit per body, bodies past 32 share bits): a whole molecule
+    // with no other body in its 27 cells has nothing to collide with, so the pair search skips it (two bodies
+    // touching put both whole volumes in the hash, and searching all of it was most of the frame)
+    if (!this.hbm || this.hbm.length !== hs) this.hbm = new Int32Array(hs);
+    const hbm = this.hbm; hbm.fill(0);
+    // torn/surface molecules also get their own copy of the table: a torn molecule with no other body nearby only
+    // meets torn molecules of its own body, so it searches just those
+    if (!this.hcc || this.hcc.length !== hs + 1) { this.hcc = new Int32Array(hs + 1); this.hec = new Int32Array(N); }
+    const hcc = this.hcc, hec = this.hec; hcc.fill(0);
+    // a fine body next to a coarse one: the table's cells are sized for the coarse molecules, so a fine body's torn
+    // molecules would each test dozens of their own neighbours; they get a table with cells sized for them instead
+    let fineR = Infinity;
+    for (const b of bodies) { if (b.asleep) continue; if (b._maxRad == null) { let m = 0; for (let i = b.start, e = b.start + b.count; i < e; i++) if (rad[i] > m) m = rad[i]; b._maxRad = m; } fineR = Math.min(fineR, b._maxRad); }
+    const fcell = 2 * fineR, useFine = fcell * icell < 0.8, ifc = 1 / fcell;
+    if (useFine && (!this.hcf || this.hcf.length !== hs + 1)) { this.hcf = new Int32Array(hs + 1); this.hef = new Int32Array(N); }
+    const hcf = this.hcf, hef = this.hef, fineB = this._fineB || (this._fineB = []);
+    for (let k = 0; k < bodies.length; k++) fineB[k] = useFine && 2 * bodies[k]._maxRad * 0.92 <= fcell * 1.0000001 ? 1 : 0;
+    if (useFine) hcf.fill(0);
+    // whole flesh of a body touching another only matters close to that other body: a molecule further than a few
+    // cells outside every other touching body's box can't meet it, so it stays out of the table
+    const nbd = bodies.length, xbl = this._xbl || (this._xbl = []); xbl.length = 0;
+    if (xb && nbd <= 12) {
+      const bx = this._cbox && this._cbox.length >= 6 * nbd ? this._cbox : (this._cbox = new Float64Array(6 * nbd));
+      for (let k = 0; k < nbd; k++) {
+        const b = bodies[k]; if (!xb[k] || b.asleep) continue;
+        let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9;
+        for (let i = b.start, e = b.start + b.count; i < e; i++) {
+          if (dead[i]) continue;
+          const i3 = 3 * i, px = x[i3], py = x[i3 + 1], pz = x[i3 + 2];
+          if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; if (pz < z0) z0 = pz; if (pz > z1) z1 = pz;
+        }
+        const g = 3 / icell;
+        bx[6 * k] = x0 - g; bx[6 * k + 1] = y0 - g; bx[6 * k + 2] = z0 - g; bx[6 * k + 3] = x1 + g; bx[6 * k + 4] = y1 + g; bx[6 * k + 5] = z1 + g;
+        xbl.push(k);
+      }
+    }
+    const cbox = this._cbox, filt = xbl.length > 0;
+    let n = 0, lgx = 1e9, lgy = 0, lgz = 0, lpb = -1;
     for (let i = 0; i < N; i++) {
-      if ((!cand[i] && !(xb && xb[pb[i]])) || dead[i] || bodies[pb[i]].asleep) continue;
+      const pi = pb[i];
+      if ((!cand[i] && !(xb && xb[pi])) || dead[i] || bodies[pi].asleep) continue;
       const i3 = 3 * i;
+      if (filt && !cand[i] && !bodies[pi].selfCol) {
+        const px = x[i3], py = x[i3 + 1], pz = x[i3 + 2]; let near = false;
+        for (let q = 0; q < xbl.length; q++) {
+          const k = xbl[q]; if (k === pi) continue; const o = 6 * k;
+          if (px >= cbox[o] && px <= cbox[o + 3] && py >= cbox[o + 1] && py <= cbox[o + 4] && pz >= cbox[o + 2] && pz <= cbox[o + 5]) { near = true; break; }
+        }
+        if (!near) continue;
+      }
       const cx = Math.floor(x[i3] * icell), cy = Math.floor(x[i3 + 1] * icell), cz = Math.floor(x[i3 + 2] * icell);
       const hk = (Math.imul(cx, 92837111) ^ Math.imul(cy, 689287499) ^ Math.imul(cz, 283923481)) & mask;
       hc[hk]++; hl[n++] = i;
+      if (cand[i]) { if (fineB[pb[i]]) hcf[(Math.imul(Math.floor(x[i3] * ifc), 92837111) ^ Math.imul(Math.floor(x[i3 + 1] * ifc), 689287499) ^ Math.imul(Math.floor(x[i3 + 2] * ifc), 283923481)) & mask]++; else hcc[hk]++; }
+      const gx = Math.floor(cx / 3), gy = Math.floor(cy / 3), gz = Math.floor(cz / 3);
+      if (gx !== lgx || gy !== lgy || gz !== lgz || pi !== lpb) { hbm[(Math.imul(gx, 92837111) ^ Math.imul(gy, 689287499) ^ Math.imul(gz, 283923481)) & mask] |= 1 << (pi & 31); lgx = gx; lgy = gy; lgz = gz; lpb = pi; }
     }
     if (n < 2) return;
-    let acc = 0; for (let k = 0; k < hs; k++) { acc += hc[k]; hc[k] = acc; } hc[hs] = acc;
+    let acc = 0, acc2 = 0; for (let k = 0; k < hs; k++) { acc += hc[k]; hc[k] = acc; acc2 += hcc[k]; hcc[k] = acc2; } hc[hs] = acc; hcc[hs] = acc2;
+    if (useFine) { let a3 = 0; for (let k = 0; k < hs; k++) { a3 += hcf[k]; hcf[k] = a3; } hcf[hs] = a3; }
     for (let t = 0; t < n; t++) {
       const i = hl[t], i3 = 3 * i;
       const cx = Math.floor(x[i3] * icell), cy = Math.floor(x[i3 + 1] * icell), cz = Math.floor(x[i3 + 2] * icell);
       const hk = (Math.imul(cx, 92837111) ^ Math.imul(cy, 689287499) ^ Math.imul(cz, 283923481)) & mask;
       he[--hc[hk]] = i;
+      if (cand[i]) { if (fineB[pb[i]]) hef[--hcf[(Math.imul(Math.floor(x[i3] * ifc), 92837111) ^ Math.imul(Math.floor(x[i3 + 1] * ifc), 689287499) ^ Math.imul(Math.floor(x[i3 + 2] * ifc), 283923481)) & mask]] = i; else hec[--hcc[hk]] = i; }
     }
+    // every bucket lists its molecules from the highest index down (and bodies own consecutive index ranges), so a
+    // search stops at the first j <= i, and the part of a bucket holding the molecule's own body can be skipped or
+    // read from the torn-molecule table instead
+    const cv0 = this.candVer || 0;
+    // neighbouring molecules mostly share the same blocks: remember the last block lookup
+    let mgx = 1e9, mgy = 0, mgz = 0, mlast = 0;
     for (let t = 0; t < n; t++) {
       const i = hl[t], i3 = 3 * i;
-      const wi = w[i], ri = rad[i];
+      const pbi = pb[i], candI = cand[i], selfI = bodies[pbi].selfCol, eP = bodies[pbi].start + bodies[pbi].count;
+      const ri = rad[i];
       const cx = Math.floor(x[i3] * icell), cy = Math.floor(x[i3 + 1] * icell), cz = Math.floor(x[i3 + 2] * icell);
+      let near = true;
+      if (!selfI) {
+        // whole flesh only meets other bodies: skip it unless another body is in a block next to it
+        // (checked on blocks of 3x3x3 cells: a per-cell mask in a table this size would be all hash collisions)
+        const own = 1 << (pbi & 31);
+        // (a molecule in the same cell as the last one checked sees the same blocks)
+        if (cx !== mgx || cy !== mgy || cz !== mgz) {
+          let m = 0;
+          const gx0 = Math.floor((cx - 1) / 3), gx1 = Math.floor((cx + 1) / 3), gy0 = Math.floor((cy - 1) / 3), gy1 = Math.floor((cy + 1) / 3), gz0 = Math.floor((cz - 1) / 3), gz1 = Math.floor((cz + 1) / 3);
+          for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) for (let gz = gz0; gz <= gz1; gz++)
+            m |= hbm[(Math.imul(gx, 92837111) ^ Math.imul(gy, 689287499) ^ Math.imul(gz, 283923481)) & mask];
+          mgx = cx; mgy = cy; mgz = cz; mlast = m;
+        }
+        near = (mlast & ~own) !== 0;
+        if (!near && !candI) continue;
+      }
+      const fresh = (this.candVer || 0) === cv0, fineOwn = fineB[pbi] && fresh;
       for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) for (let oz = -1; oz <= 1; oz++) {
         const hk = (Math.imul(cx + ox, 92837111) ^ Math.imul(cy + oy, 689287499) ^ Math.imul(cz + oz, 283923481)) & mask;
-        for (let e = hc[hk], ee = hc[hk + 1]; e < ee; e++) {
-          const j = he[e];
-          if (j <= i) continue;
-          const j3 = 3 * j;
-          const dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2];
-          const d2 = dx * dx + dy * dy + dz * dz;
-          const md = (ri + rad[j]) * 0.92;
-          if (d2 >= md * md || d2 < 1e-14) continue;
-          const other = pb[i] !== pb[j];
-          if (!other && !(cand[i] && cand[j]) && !bodies[pb[i]].selfCol) continue; // inside one body only torn molecules collide (unless it is being pressed)
-          const wj = w[j], ws = wi + wj;
-          if (ws === 0) continue;
-          const d = Math.sqrt(d2), pen = Math.min(md - d, other ? Math.max(maxCorr, 0.45 * md) : maxCorr);
-          const nx = dx / d, ny = dy / d, nz = dz / d;
-          // sticky goo: torn molecules that bump into each other (or into a body) cling together
-          // (two different bodies never glue together, only loose beads (no bonds left) cling across bodies)
-          if ((nbb[i] > 0 || nbb[j] > 0) && plc[i] < 3 && plc[j] < 3 && this.lcount < this.LMAX && (pb[i] === pb[j] || nbb[i] === 0 || nbb[j] === 0)) {
-            // (torn flesh to torn flesh holds; a loose drop only rarely sticks to whole skin, so blood runs off and drips
-            // instead of coating the head)
-            // two faces of a clean cut (both molecules still mostly whole) barely glue back together, or a severed piece
-            // never comes off; shredded flesh still clumps
-            const nb0 = this.nb0, cutFace = !other && nbb[i] * 2 < nb0[i] && nbb[j] * 2 < nb0[j];
-            const g = Math.min(bodies[pb[i]].goo || 0, bodies[pb[j]].goo || 0) * ((nbb[i] > 0 && nbb[j] > 0) ? (cutFace ? 0.03 : 0.5) : 0.025) * this._gooK;
-            if (g > 0 && hash32(i * 73856093 ^ j * 19349663 ^ frame) < g) this._gooLink(i, j);
+        let e = hc[hk];
+        const ee = hc[hk + 1];
+        if (near) {
+          // molecules of bodies after this one in the table
+          for (; e < ee; e++) {
+            const j = he[e]; if (j < eP) break;
+            const j3 = 3 * j, dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2], d2 = dx * dx + dy * dy + dz * dz, md = (ri + rad[j]) * 0.92;
+            if (d2 < md * md && d2 >= 1e-14) this._pairHit(i, j, dx, dy, dz, d2, md, mu, maxCorr, ihc);
           }
-          if (other && ihc) {
-            // one body slamming into another: a hard enough hit knocks it out and shatters already torn flesh, as a weapon would
-            // closing speed from the molecules' velocities at the start of the substep: the distance moved this substep
-            // also holds the bond and contact corrections, which at many substeps read as tens of m/s and shattered
-            // flesh on first touch (a punch landing on a face)
-            const vn = (v[i3] - v[j3]) * nx + (v[i3 + 1] - v[j3 + 1]) * ny + (v[i3 + 2] - v[j3 + 2]) * nz;
-            if (vn > 0.5) {
-              const bI = bodies[pb[i]], bJ = bodies[pb[j]];
-              bI.touchT = frame; bJ.touchT = frame;
-              // a hard hit is not softened by the speed-change limit (that turned a thrown stone into a rubber ball)
-              if (vn > 2) { this.ct[i] = 3; this.ct[j] = 3; const cv = this.cvn; if (vn > cv[i]) cv[i] = vn; if (vn > cv[j]) cv[j] = vn; }
-              if (vn > bI.koSpeed) bI.koHit = true;
-              if (vn > bJ.koSpeed) bJ.koHit = true;
-              // already torn flesh shatters at weapon speeds; intact flesh only at extreme ones (a bullet, a fast stone)
-              const tI = bI.shatter * this.shm[i] * (nbb[i] > 0 ? 1 : Engine.BLUNTX), tJ = bJ.shatter * this.shm[j] * (nbb[j] > 0 ? 1 : Engine.BLUNTX);
-              if (vn > tI && nbb[i] < this.nb0[i]) { this._breakParticle(i); }
-              if (vn > tJ && nbb[j] < this.nb0[j]) { this._breakParticle(j); }
-            }
+        }
+        // its own body: everything while it is being pressed, otherwise torn molecules only
+        if (selfI || !fresh) {
+          for (; e < ee; e++) {
+            const j = he[e]; if (j >= eP) continue; if (j <= i) break;
+            if (!selfI && !(cand[i] && cand[j])) continue;
+            const j3 = 3 * j, dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2], d2 = dx * dx + dy * dy + dz * dz, md = (ri + rad[j]) * 0.92;
+            if (d2 < md * md && d2 >= 1e-14) this._pairHit(i, j, dx, dy, dz, d2, md, mu, maxCorr, ihc);
           }
-          const si = pen * wi / ws, sj = pen * wj / ws;
-          x[i3] -= nx * si; x[i3 + 1] -= ny * si; x[i3 + 2] -= nz * si;
-          x[j3] += nx * sj; x[j3 + 1] += ny * sj; x[j3 + 2] += nz * sj;
-          if (mu > 0) {
-            const rx = (x[i3] - xp[i3]) - (x[j3] - xp[j3]), ry = (x[i3 + 1] - xp[i3 + 1]) - (x[j3 + 1] - xp[j3 + 1]), rz = (x[i3 + 2] - xp[i3 + 2]) - (x[j3 + 2] - xp[j3 + 2]);
-            const rn = rx * nx + ry * ny + rz * nz;
-            const tx = rx - rn * nx, ty = ry - rn * ny, tz = rz - rn * nz;
-            // wet cut faces of one body slide over each other (a severed half slips off instead of balancing)
-            const f = mu * (other ? 0.5 : Engine.CUTMU);
-            x[i3] -= tx * f * wi / ws * 2; x[i3 + 1] -= ty * f * wi / ws * 2; x[i3 + 2] -= tz * f * wi / ws * 2;
-            x[j3] += tx * f * wj / ws * 2; x[j3 + 1] += ty * f * wj / ws * 2; x[j3 + 2] += tz * f * wj / ws * 2;
+        } else if (cand[i] && !fineOwn) {
+          for (let f = hcc[hk], fe = hcc[hk + 1]; f < fe; f++) {
+            const j = hec[f]; if (j >= eP) continue; if (j <= i) break;
+            const j3 = 3 * j, dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2], d2 = dx * dx + dy * dy + dz * dz, md = (ri + rad[j]) * 0.92;
+            if (d2 < md * md && d2 >= 1e-14) this._pairHit(i, j, dx, dy, dz, d2, md, mu, maxCorr, ihc);
           }
         }
       }
+      // a fine body's own torn molecules sit in their own finer table
+      if (!selfI && fineOwn && cand[i]) {
+        const fx = Math.floor(x[i3] * ifc), fy = Math.floor(x[i3 + 1] * ifc), fz = Math.floor(x[i3 + 2] * ifc);
+        for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) for (let oz = -1; oz <= 1; oz++) {
+          const hk = (Math.imul(fx + ox, 92837111) ^ Math.imul(fy + oy, 689287499) ^ Math.imul(fz + oz, 283923481)) & mask;
+          for (let f = hcf[hk], fe = hcf[hk + 1]; f < fe; f++) {
+            const j = hef[f]; if (j >= eP) continue; if (j <= i) break;
+            const j3 = 3 * j, dx = x[j3] - x[i3], dy = x[j3 + 1] - x[i3 + 1], dz = x[j3 + 2] - x[i3 + 2], d2 = dx * dx + dy * dy + dz * dz, md = (ri + rad[j]) * 0.92;
+            if (d2 < md * md && d2 >= 1e-14) this._pairHit(i, j, dx, dy, dz, d2, md, mu, maxCorr, ihc);
+          }
+        }
+      }
+    }
+  };
+
+  // two molecules found overlapping: push them apart (with friction), stick torn ones, and register body-on-body hits
+  Engine.prototype._pairHit = function (i, j, dx, dy, dz, d2, md, mu, maxCorr, ihc) {
+    const x = this.x, xp = this.xp, v = this.v, w = this.w, cand = this.cand, nbb = this.nbb, plc = this.plc, bodies = this.bodies, pb = this.pb, frame = this.frame;
+    const i3 = 3 * i, j3 = 3 * j, wi = w[i];
+    const other = pb[i] !== pb[j];
+    if (!other && !(cand[i] && cand[j]) && !bodies[pb[i]].selfCol) return; // inside one body only torn molecules collide (unless it is being pressed)
+    const wj = w[j], ws = wi + wj;
+    if (ws === 0) return;
+    const d = Math.sqrt(d2), pen = Math.min(md - d, other ? Math.max(maxCorr, 0.45 * md) : maxCorr);
+    const nx = dx / d, ny = dy / d, nz = dz / d;
+    // sticky goo: torn molecules that bump into each other (or into a body) cling together
+    // (two different bodies never glue together, only loose beads (no bonds left) cling across bodies)
+    if ((nbb[i] > 0 || nbb[j] > 0) && plc[i] < 3 && plc[j] < 3 && this.lcount < this.LMAX && (pb[i] === pb[j] || nbb[i] === 0 || nbb[j] === 0)) {
+      // (torn flesh to torn flesh holds; a loose drop only rarely sticks to whole skin, so blood runs off and drips
+      // instead of coating the head)
+      // two faces of a clean cut (both molecules still mostly whole) barely glue back together, or a severed piece
+      // never comes off; shredded flesh still clumps
+      const nb0 = this.nb0, cutFace = !other && nbb[i] * 2 < nb0[i] && nbb[j] * 2 < nb0[j];
+      const g = Math.min(bodies[pb[i]].goo || 0, bodies[pb[j]].goo || 0) * ((nbb[i] > 0 && nbb[j] > 0) ? (cutFace ? 0.03 : 0.5) : 0.025) * this._gooK;
+      if (g > 0 && hash32(i * 73856093 ^ j * 19349663 ^ frame) < g) this._gooLink(i, j);
+    }
+    if (other && ihc) {
+      // one body slamming into another: a hard enough hit knocks it out and shatters already torn flesh, as a weapon would
+      // closing speed from the molecules' velocities at the start of the substep: the distance moved this substep
+      // also holds the bond and contact corrections, which at many substeps read as tens of m/s and shattered
+      // flesh on first touch (a punch landing on a face)
+      const vn = (v[i3] - v[j3]) * nx + (v[i3 + 1] - v[j3 + 1]) * ny + (v[i3 + 2] - v[j3 + 2]) * nz;
+      if (vn > 0.5) {
+        const bI = bodies[pb[i]], bJ = bodies[pb[j]];
+        bI.touchT = frame; bJ.touchT = frame;
+        // a hard hit is not softened by the speed-change limit (that turned a thrown stone into a rubber ball)
+        if (vn > 2) { this.ct[i] = 3; this.ct[j] = 3; const cv = this.cvn; if (vn > cv[i]) cv[i] = vn; if (vn > cv[j]) cv[j] = vn; }
+        if (vn > bI.koSpeed) bI.koHit = true;
+        if (vn > bJ.koSpeed) bJ.koHit = true;
+        // a superhuman landing a blow (a headbutt, a punch, a knee): whatever it strikes at speed is torn apart
+        const rI = bI.params.rend && !bJ.params.rend, rJ = bJ.params.rend && !bI.params.rend;
+        if ((rI || rJ) && vn > Engine.RENDV) {
+          const t = rI ? j : i, bt = rI ? bJ : bI;
+          bt.koHit = true;
+          if (nbb[t] < this.nb0[t] || vn > Engine.RENDV * 1.6) this._breakParticle(t);
+          this.ct[t] = 3; const cv = this.cvn; if (vn > cv[t]) cv[t] = vn;
+        }
+        // already torn flesh shatters at weapon speeds; intact flesh only at extreme ones (a bullet, a fast stone)
+        const tI = bI.shatter * this.shm[i] * (nbb[i] > 0 ? 1 : Engine.BLUNTX), tJ = bJ.shatter * this.shm[j] * (nbb[j] > 0 ? 1 : Engine.BLUNTX);
+        if (vn > tI && nbb[i] < this.nb0[i]) { this._breakParticle(i); }
+        if (vn > tJ && nbb[j] < this.nb0[j]) { this._breakParticle(j); }
+      }
+    }
+    const si = pen * wi / ws, sj = pen * wj / ws;
+    x[i3] -= nx * si; x[i3 + 1] -= ny * si; x[i3 + 2] -= nz * si;
+    x[j3] += nx * sj; x[j3 + 1] += ny * sj; x[j3 + 2] += nz * sj;
+    if (mu > 0) {
+      const rx = (x[i3] - xp[i3]) - (x[j3] - xp[j3]), ry = (x[i3 + 1] - xp[i3 + 1]) - (x[j3 + 1] - xp[j3 + 1]), rz = (x[i3 + 2] - xp[i3 + 2]) - (x[j3 + 2] - xp[j3 + 2]);
+      const rn = rx * nx + ry * ny + rz * nz;
+      const tx = rx - rn * nx, ty = ry - rn * ny, tz = rz - rn * nz;
+      // wet cut faces of one body slide over each other (a severed half slips off instead of balancing)
+      const f = mu * (other ? 0.5 : Engine.CUTMU);
+      x[i3] -= tx * f * wi / ws * 2; x[i3 + 1] -= ty * f * wi / ws * 2; x[i3 + 2] -= tz * f * wi / ws * 2;
+      x[j3] += tx * f * wj / ws * 2; x[j3 + 1] += ty * f * wj / ws * 2; x[j3 + 2] += tz * f * wj / ws * 2;
     }
   };
 
@@ -2046,6 +2270,10 @@
           for (const k in out) if (out[k] && out[k].buffer instanceof ArrayBuffer) tr.push(out[k].buffer);
           for (const k in out.skin) if (out.skin[k] && out.skin[k].buffer instanceof ArrayBuffer) tr.push(out.skin[k].buffer);
           self.postMessage({ type: 'shape', id: m.id, out }, tr);
+        } else if (m.type === 'append') {
+          if (gpu && gpu.resident) await gpu.download(eng);
+          const info = eng.append(m.bodies);
+          self.postMessage({ type: 'appended', id: m.id, info });
         } else if (m.type === 'step') {
           let stats;
           const g = wantGpu(m.input.physics) ? await getGpu() : null;

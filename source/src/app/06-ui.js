@@ -416,7 +416,11 @@ function buildToolbar() {
   const clean = el('button', { class: 'vp-btn', id: 'vb-clean', title: 'Clean view: hide every editor helper (Shift+H)', html: ICON.render });
   clean.onclick = () => { APP.renderMode = !APP.renderMode; updateToolbar(); APP.dirtyEval = true; syncGizmo(); };
   g3.append(cam, camMenu, grid, clean);
-  vh.append(g1, g2, el('div', { class: 'vp-spacer' }), g3);
+  const g4 = el('div', { class: 'vp-group', role: 'group', 'aria-label': 'Play' });
+  const play = el('button', { class: 'vp-btn', id: 'vb-play', title: 'Play the sandbox: first person with guns, or VR on a Quest', html: ICON.play }, el('span', { class: 'vl' }, 'Play / VR'));
+  play.onclick = () => { const r = play.getBoundingClientRect(); showMenu(playMenuItems(), r.left - 160, r.bottom + 4, play); };
+  g4.append(play);
+  vh.append(g1, g2, el('div', { class: 'vp-spacer' }), g4, g3);
 }
 function updateToolbar() {
   $$('#toolbar .tool[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === APP.tool));
@@ -758,7 +762,7 @@ function fieldRow(obj, fd) {
       for (const [v, t] of (typeof fd.options === 'function' ? fd.options() : fd.options)) s.append(el('option', { value: v }, t));
       s.addEventListener('change', () => { const pre = fd.beforeSet ? fd.beforeSet(obj) : null; pushUndo(); setProp(obj, fd.key, s.value); if (fd.onSet) { fd.onSet(obj, s.value, pre); buildProps(); } });
       ctl.append(s);
-      update = (P) => { if (document.activeElement !== s) s.value = String(P[fd.key]); };
+      update = (P) => { if (document.activeElement !== s) s.value = String(P[fd.key]); if (fd.anim) { const st = keyState(obj, fd.key); s.classList.toggle('keyed', st === 'keyed'); s.classList.toggle('animated', st === 'animated'); } };
       break;
     }
     case 'button': {

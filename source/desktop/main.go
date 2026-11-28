@@ -7,6 +7,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net"
@@ -26,7 +27,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "29-smooth"
+const appVersion = "40-play-vr6"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64
@@ -55,6 +56,17 @@ func main() {
 
 	files := http.FileServer(http.FS(site))
 	mux := http.NewServeMux()
+	mux.HandleFunc("/__openvr", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") {
+			http.Error(w, "no", http.StatusForbidden)
+			return
+		}
+		if err := launchVR(url); err != nil {
+			http.Error(w, "Chrome or Edge was not found", http.StatusNotFound)
+			return
+		}
+		io.WriteString(w, "ok")
+	})
 	mux.HandleFunc("/__alive", func(w http.ResponseWriter, r *http.Request) {
 		lastBeat.Store(time.Now().Unix())
 		w.Header().Set("Cache-Control", "no-store")
@@ -129,6 +141,72 @@ func isOurs(url string) bool {
 	return string(b) == "shatterbond"
 }
 
+// findChrome prefers Google Chrome (its WebXR works with every OpenXR runtime), then Edge
+func findChrome() string {
+	roots := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")}
+	for _, rel := range []string{`Google\Chrome\Application\chrome.exe`, `Microsoft\Edge\Application\msedge.exe`} {
+		for _, root := range roots {
+			if root == "" {
+				continue
+			}
+			c := filepath.Join(root, rel)
+			if st, err := os.Stat(c); err == nil && !st.IsDir() {
+				return c
+			}
+		}
+	}
+	return ""
+}
+
+// launchVR opens a second window just for VR play, in Chrome with its own profile
+func launchVR(url string) error {
+	exe := findChrome()
+	if exe == "" {
+		return os.ErrNotExist
+	}
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = os.TempDir()
+	}
+	profile := filepath.Join(base, "Shatterbond", "BrowserVR")
+	os.MkdirAll(profile, 0o755)
+	allowVR(profile, url)
+	return exec.Command(exe, "--app="+url+"?vr=1", "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
+		"--window-size=1280,800", "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+		// the VR runtime (Meta Link / SteamVR) has to load inside the browser's XR process; the sandbox around that
+		// process blocks runtimes that don't support it, which shows up as "session configuration is not supported"
+		"--disable-features=XRSandbox", "--enable-features=WebXR,OpenXR,WebXRHandInput", "--force-webxr-runtime=openxr").Start()
+}
+
+// allowVR pre-answers Chrome's "use your virtual reality devices" question for this one local site. The
+// question appears on the PC screen, not in the headset, so a player in VR never sees it and the headset
+// sits on its loading screen. Only the VR window's own profile is touched; open Chrome windows keep theirs.
+func allowVR(profile, url string) {
+	dir := filepath.Join(profile, "Default")
+	os.MkdirAll(dir, 0o755)
+	file := filepath.Join(dir, "Preferences")
+	prefs := map[string]any{}
+	if b, err := os.ReadFile(file); err == nil {
+		json.Unmarshal(b, &prefs)
+	}
+	sub := func(m map[string]any, k string) map[string]any {
+		if v, ok := m[k].(map[string]any); ok {
+			return v
+		}
+		v := map[string]any{}
+		m[k] = v
+		return v
+	}
+	origin := strings.TrimSuffix(url, "/") + ",*"
+	ex := sub(sub(sub(prefs, "profile"), "content_settings"), "exceptions")
+	for _, t := range []string{"vr", "ar", "hand_tracking"} {
+		sub(ex, t)[origin] = map[string]any{"setting": 1, "last_modified": "13350000000000000"}
+	}
+	if b, err := json.Marshal(prefs); err == nil {
+		os.WriteFile(file, b, 0o644)
+	}
+}
+
 func findBrowser() string {
 	var cands []string
 	roots := []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")}
@@ -169,7 +247,10 @@ func launch(url string) *exec.Cmd {
 			"--disable-renderer-backgrounding",
 			// do not keep running in the background after the window closes
 			"--disable-background-mode",
-			"--disable-features=msEdgeStartupBoost,msEdgeSidebarV2",
+			"--disable-features=msEdgeStartupBoost,msEdgeSidebarV2,XRSandbox",
+			// play mode: VR through whatever OpenXR runtime is active (Quest Link / Meta Horizon Link or SteamVR)
+			"--enable-features=WebXR,OpenXR,WebXRHandInput",
+			"--force-webxr-runtime=openxr",
 		)
 		if err := cmd.Start(); err == nil {
 			return cmd

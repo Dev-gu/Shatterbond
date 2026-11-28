@@ -799,7 +799,7 @@ TYPES.singularity = {
 /* ---------- camera ---------- */
 TYPES.camera = {
   label: 'Camera', icon: 'camera', cat: 'camera',
-  defaults: () => ({ position: [5.2, 2.4, 6.4], target: [0, 1.1, 0], fov: 38, dof: false, focusObj: '', focusDist: 0, blur: 1, fstop: 2.8, shotStart: -1, followObj: '', followMode: 'look', followAim: [0, 0, 0], followKeepY: false, visible: true }),
+  defaults: () => ({ position: [5.2, 2.4, 6.4], target: [0, 1.1, 0], fov: 38, dof: false, focusObj: '', focusPull: 12, focusDist: 0, blur: 1, fstop: 2.8, shotStart: -1, followObj: '', followMode: 'look', followAim: [0, 0, 0], followKeepY: false, visible: true }),
   groups: (P) => [{ id: 'transform', title: 'Camera', fields: [
     F('lookBtn', 'View', 'button', { noanim: true, text: 'Look through this camera', action: (o) => lookThrough(o) }),
     F('position', 'Location', 'vec3', { step: 0.05, unit: 'm' }),
@@ -807,7 +807,8 @@ TYPES.camera = {
     F('fov', 'Field of view', 'num', { min: 5, max: 140, step: 0.5, unit: '°' }),
   ] }, { id: 'lens', title: 'Depth of field', fields: [
     F('dof', 'Depth of field', 'bool', { help: 'Blur what is nearer or further than the focus point when looking through this camera, in renders and videos. Can be keyframed to switch on and off.' }),
-    F('focusObj', 'Focus on', 'select', { noanim: true, options: () => [['', 'Focus distance below'], ['@auto', 'Autofocus (whatever the centre of the view points at)'], ...allObjs().filter(x => x.type !== 'camera').map(x => [x.id, x.name])], help: 'Autofocus shoots a ray from the middle of the view and focuses on the first thing it hits, so moving the camera keeps the nearest object sharp. Or pick an object to keep it sharp wherever it goes, or "Focus distance below" to set the distance by hand.' }),
+    F('focusObj', 'Focus on', 'select', { anim: true, options: () => [['', 'Focus distance below'], ['@auto', 'Autofocus (whatever the centre of the view points at)'], ...allObjs().filter(x => x.type !== 'camera').map(x => [x.id, x.name])], help: 'Autofocus shoots a ray from the middle of the view and focuses on the first thing it hits, so moving the camera keeps the nearest object sharp. Or pick an object to keep it sharp wherever it goes, or "Focus distance below" to set the distance by hand. Keyframe it to switch focus from one subject to another during a shot.' }),
+    F('focusPull', 'Focus pull', 'num', { min: 0, max: 240, step: 1, unit: 'fr', noanim: true, help: 'When a keyframe switches "Focus on" to another subject, the focus glides over to it in this many frames, starting at the keyframe (a rack focus). 0 snaps straight over.' }),
     F('focusDist', 'Focus distance', 'num', { min: 0, max: 200, step: 0.05, unit: 'm', help: 'How far from the camera things are sharpest. 0 focuses on the "Looks at" point. Keyframe it to pull focus.' }),
     F('blur', 'Blur amount', 'num', { min: 0, max: 6, step: 0.05, help: 'How strongly things out of focus are blurred. 0 is no blur, 1 is normal, higher is dreamier. Keyframe it to blur in or out.' }),
     F('fstop', 'Aperture (f-stop)', 'num', { min: 0.7, max: 22, step: 0.1, help: 'Photography style control of the same blur: lower numbers blur more.' }),

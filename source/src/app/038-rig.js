@@ -83,6 +83,18 @@ function clipQ(C) {
   return D.q;
 }
 function clipHip(C) { if (C.hip) return C.hip; clipQ(C); return _clipCache.get(C).hip; }
+// segment rotation (row-major 3x3, as RIG keeps them) <-> quaternion, and limiting how far a segment turns from its parent
+const NECK_MAX = 30 * Math.PI / 180, HEAD_MAX = 34 * Math.PI / 180;
+function g2q(g) { return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().set(g[0], g[1], g[2], 0, g[3], g[4], g[5], 0, g[6], g[7], g[8], 0, 0, 0, 0, 1)); }
+function q2g(q) { return new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(q)).transpose().elements.slice(); }
+function clampRel(G, s, p, max) {
+  const qp = g2q(G[p]), rel = qp.clone().invert().multiply(g2q(G[s]));
+  if (rel.w < 0) { rel.x = -rel.x; rel.y = -rel.y; rel.z = -rel.z; rel.w = -rel.w; }
+  const ang = 2 * Math.acos(Math.min(1, rel.w));
+  if (!(ang > max)) return;
+  rel.slerp(new THREE.Quaternion(), 1 - max / ang);
+  G[s] = q2g(qp.multiply(rel));
+}
 function packClip(name, fps, n, q, hip) {
   const qp = q.map(a => { if (!a || !a.length) return ''; const i16 = new Int16Array(a.length); for (let k = 0; k < a.length; k++) i16[k] = Math.round(Math.max(-1, Math.min(1, a[k])) * 32767); return bytesToB64(new Uint8Array(i16.buffer)); });
   return { name, fps, n, qp, hp: bytesToB64(new Uint8Array(Float32Array.from(hip).buffer)), src: 'mixamo', v: 2 };
@@ -177,6 +189,9 @@ const RIG = {
       const x = ax + (bx - ax) * u, y = ay + (by - ay) * u, z = az + (bz - az) * u, w = aw + (bw - aw) * u, l = Math.hypot(x, y, z, w) || 1;
       G[s] = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(x / l, y / l, z / l, w / l))).transpose().elements.slice();
     }
+    // a neck and head can only bend so far: Mixamo clips (a flying knee looking down at the target) can tuck the head
+    // much further than our skin can follow, which crushed the face into the chest and crumpled the neck
+    if (G[0] && G[1] && G[2]) { clampRel(G, 1, 2, NECK_MAX); clampRel(G, 0, 1, HEAD_MAX); }
     const HP = clipHip(C), hp = [0, 1, 2].map(k => HP[3 * a + k] + (HP[3 * b + k] - HP[3 * a + k]) * u);
     // forward kinematics down the segment tree with our own bone lengths; fingers the clip has no keys for follow the hand
     const P0 = R0.P0, par = BLD.FK_PARENT, order = [4, 3, 2, 1, 0, 47, 48, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].filter(s => s < NS);
