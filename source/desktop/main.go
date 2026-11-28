@@ -27,7 +27,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "39-play-vr5"
+const appVersion = "40-play-vr6"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64

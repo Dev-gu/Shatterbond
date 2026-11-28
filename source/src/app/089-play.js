@@ -514,7 +514,13 @@ function playHUD(force) {
 
 /* ---------- VR ---------- */
 // the session has to be asked for straight from the click (browsers need the user gesture), so a caller may pass one already requested
-function playRequestXR() { return navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] }); }
+// some runtimes reject a request that lists features they don't know, so step down to a bare request
+async function playRequestXR() {
+  const tries = [{ optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] }, { optionalFeatures: ['local-floor'] }, {}];
+  let last;
+  for (const o of tries) { try { return await navigator.xr.requestSession('immersive-vr', o); } catch (e) { last = e; console.warn('XR request failed', JSON.stringify(o), e && e.message); if (!e || e.name !== 'NotSupportedError') break; } }
+  throw last;
+}
 async function startXR(pending) {
   if (PLAY.xr || !navigator.xr) return;
   let session;
@@ -531,7 +537,9 @@ async function startXR(pending) {
   PLAY.session = session; PLAY.xr = true;
   if (PLAY_GUNS[PLAY.gun].vrOnly === undefined && PLAY.gun > 5) PLAY.gun = 0;
   const xr = R.renderer.xr;
-  xr.enabled = true; xr.setReferenceSpaceType('local-floor');
+  const feats = session.enabledFeatures || ['local-floor'];
+  xr.enabled = true; xr.setReferenceSpaceType(feats.includes('local-floor') ? 'local-floor' : 'local');
+  PLAY.noFloorSpace = !feats.includes('local-floor'); // 'local' starts at the head, so lift the play space by a standing eye height
   try { R.renderer.setPixelRatio(1); } catch (e) { /* keep */ }
   try { await xr.setSession(session); }
   catch (err) { console.error(err); PLAY.xr = false; PLAY.session = null; xr.enabled = false; session.end().catch(() => {}); playVRHelp('VR started but the 3D view could not attach to it: ' + (err && (err.name + ': ' + err.message))); return; }
@@ -710,7 +718,7 @@ function playXRInput(dt) {
   if (!PLAY.hands) return;
   const xrCam = R.renderer.xr.getCamera();
   // seated: lift the whole play space so a seated player sees from standing height
-  PLAY.dolly.position.y = PLAY.seated ? PLAY.seatH : 0;
+  PLAY.dolly.position.y = (PLAY.seated ? PLAY.seatH : 0) + (PLAY.noFloorSpace ? 1.6 : 0);
   PLAY.fireCd -= dt;
   if (PLAY.xhands) playHandInput(dt, xrCam);
   for (const h of PLAY.hands) {
