@@ -168,7 +168,7 @@ function importJSON() {
 function exportJSON() { saveFile(slug(APP.scene.name) + '.shatterbond.json', JSON.stringify(JSON.parse(snapshot()), null, 1)); }
 let _lastAuto = '';
 function autosave() {
-  if (!APP.scene || APP.recording) return;
+  if (!APP.scene || APP.recording || PLAY.on) return;
   const s = snapshot(); if (s === _lastAuto) return;
   _lastAuto = s;
   try { localStorage.setItem(AUTO_KEY, s); } catch (e) { /* quota: ignore */ }
@@ -472,6 +472,7 @@ document.addEventListener('pointermove', (e) => { MOUSE.x = e.clientX; MOUSE.y =
 function hoveredField() { const r = MOUSE.target && MOUSE.target.closest && MOUSE.target.closest('.row'); return r && r._field; }
 function inViewport() { return MOUSE.target && R.vp.contains(MOUSE.target); }
 function onKey(e) {
+  if (PLAY.on) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
   if (APP.recording) { if (e.key === 'Escape') { e.preventDefault(); stopRecording(true); } return; }
@@ -711,6 +712,8 @@ const LOOP = { last: performance.now(), frames: 0, fpsT: performance.now(), fps:
 APP.evalStamp = 0;
 function frameLoop(now) {
   requestAnimationFrame(frameLoop);
+  // play mode runs its own loop (VR drives it from the headset's frame loop instead)
+  if (PLAY.on) { if (!PLAY.xr) playFrame(now); return; }
   // optional frame cap (saves battery and heat on laptops)
   if (PERF.fpsCap > 0 && now - LOOP.last < 1000 / PERF.fpsCap - 2) return;
   const ms = now - LOOP.last; LOOP.last = now;
@@ -896,5 +899,5 @@ function boot() {
   setTimeout(() => { if (!SIM.ready && SIM.active()) SIM.ensureLayout().catch(() => {}); }, 300);
 }
 // handle for debugging from the browser console
-window.SB = { APP, SIM, HDEF, PERF, FXS, POSTFX, RIG, ANIM_CLIPS, ANIMLIB, TL, MOL, R, UI, REMOTE, PROPS, OUT, TYPES, DEMOS, MOTIONS, fn: { updateCropGuide, outSize, camForOutput, exportRange, loadDemo, addObject, addObjectAtCursor, select, setTool, setShading, insertKeyframeSelected, togglePlay, setFrame, renderStill, recordVideo, openLibrary, saveSceneCmd, showShortcuts, showAbout, showTips, applyMotion, doUndo, doRedo, buildProps, setProp, duplicateSelected, deleteSelected, resetSim, bakeAll, toggleCamView, frameSelected, blastAt, exportJSON, evalProps, snapshot, insertKey, changed, selectionBox, activateScene, retargetFBX, importMixamo, openAnimLibrary, sceneCam: (f) => sceneCamObj(f), camState, lookThrough, followShots, cycleCam, followAnchor, deleteBlast, selectBlast, clearBlasts, dofParams, dofEnabled, camFocusDist, emitTable, emitCount, pickAt, V3: THREE.Vector3, emptyScene: () => activateScene(newScene('Test'), { undoable: false }) } };
+window.SB = { APP, SIM, HDEF, PERF, FXS, POSTFX, RIG, ANIM_CLIPS, ANIMLIB, TL, MOL, R, UI, REMOTE, PLAY, PROPS, OUT, TYPES, DEMOS, MOTIONS, fn: { updateCropGuide, outSize, camForOutput, exportRange, loadDemo, addObject, addObjectAtCursor, select, setTool, setShading, insertKeyframeSelected, togglePlay, setFrame, renderStill, recordVideo, openLibrary, saveSceneCmd, showShortcuts, showAbout, showTips, applyMotion, doUndo, doRedo, buildProps, setProp, duplicateSelected, deleteSelected, resetSim, bakeAll, toggleCamView, frameSelected, blastAt, exportJSON, evalProps, snapshot, insertKey, changed, selectionBox, activateScene, retargetFBX, importMixamo, openAnimLibrary, sceneCam: (f) => sceneCamObj(f), camState, lookThrough, followShots, cycleCam, followAnchor, deleteBlast, selectBlast, clearBlasts, dofParams, dofEnabled, camFocusDist, emitTable, emitCount, pickAt, V3: THREE.Vector3, enterPlay, exitPlay, playSpawn, playFire, playStep, emptyScene: () => activateScene(newScene('Test'), { undoable: false }) } };
 boot();

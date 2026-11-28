@@ -26,7 +26,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "34-fastcontact"
+const appVersion = "35-play-vr"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64
@@ -170,6 +170,8 @@ func launch(url string) *exec.Cmd {
 			// do not keep running in the background after the window closes
 			"--disable-background-mode",
 			"--disable-features=msEdgeStartupBoost,msEdgeSidebarV2",
+			// play mode: VR through whatever OpenXR runtime is active (Quest Link / Meta Horizon Link or SteamVR)
+			"--enable-features=WebXR,WebXRHandInput",
 		)
 		if err := cmd.Start(); err == nil {
 			return cmd
