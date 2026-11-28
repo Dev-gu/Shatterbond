@@ -44,8 +44,12 @@ async function enterPlay(mode) {
   if (mode === 'vr') {
     if (!navigator.xr) { playVRHelp('This window has no WebXR (VR) support.'); return; }
     pending = playRequestXR(); pending.catch(() => {}); // asked for straight away: the browser only allows it during the click
+    // isSessionSupported is only a hint (some runtimes answer no until a session is asked for): the request decides
     let ok = false; try { ok = await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { ok = false; }
-    if (!ok) { pending.then(s => s.end()).catch(() => {}); playVRHelp('The browser reports no VR headset (immersive-vr is not supported here).'); return; }
+    if (!ok) {
+      try { const s0 = await pending; pending = Promise.resolve(s0); }
+      catch (err) { playVRHelp('The browser reports no VR headset (immersive-vr is not supported here). Request said: ' + (err && (err.name + ': ' + err.message))); return; }
+    }
   }
   if (APP.recording) return toast('Finish the video render first', true);
   if (APP.playing) togglePlay();
@@ -68,6 +72,7 @@ async function enterPlay(mode) {
   PLAY.dolly.position.copy(PLAY.pos); PLAY.dolly.rotation.set(0, 0, 0); PLAY.cam.position.set(0, 1.65, 0);
   PLAY.gunModel.visible = mode === 'fps';
   if (R.gizmo.object) R.gizmo.detach();
+  R.controls.enabled = false; // the editor's orbit camera must not react to clicks behind the game
   if (mode === 'vr') startXR(pending);
   await playResetArena();
   if (mode === 'vr') { /* already started */ }
@@ -87,7 +92,7 @@ function exitPlay() {
   const sv = PLAY.saved; PLAY.saved = null;
   try { activateScene(JSON.parse(sv), {}); } catch (e) { console.error(e); }
   if (PLAY.savedCam) { R.camera.position.copy(PLAY.savedCam.p); R.controls.target.copy(PLAY.savedCam.t); APP.camView = PLAY.savedCam.camView; }
-  R.helpers.visible = true; APP.dirtyEval = true; _dispKey = '';
+  R.helpers.visible = true; APP.dirtyEval = true; _dispKey = ''; R.controls.enabled = true;
   setTimeout(() => resizeViewport(), 0);
   toast('Back in the editor');
 }
@@ -503,7 +508,7 @@ function playHUD(force) {
   const bodies = SIM.layout ? SIM.layout.length : 0;
   h.textContent = `${g.label}   ·   Spawn: ${sp.label} (E)   ·   ${bodies} bodies · ${(SIM.N || 0).toLocaleString()} molecules · sim ${Math.round(Math.min(1, PLAY.rate) * 100 * (PLAY.slow ? 0.25 : 1))}% speed${PLAY.slow ? ' (slow-mo)' : ''}`;
   const hint = PLAY.ui.querySelector('#pl-hint');
-  hint.textContent = !PLAY.ready ? 'Building the arena…' : (!PLAY.locked && !PLAY.menuOpen && !PLAY.xr) ? 'Click to play · Tab for the spawn menu' : '';
+  hint.textContent = PLAY.vrWait ? 'Starting VR… if Chrome asks to use your VR devices (top of this window), click Allow' : !PLAY.ready ? 'Building the arena…' : (!PLAY.locked && !PLAY.menuOpen && !PLAY.xr) ? 'Click to play · Tab for the spawn menu' : '';
   PLAY.ui.querySelector('#pl-vr').hidden = !PLAY.xr;
 }
 
@@ -513,9 +518,13 @@ function playRequestXR() { return navigator.xr.requestSession('immersive-vr', { 
 async function startXR(pending) {
   if (PLAY.xr || !navigator.xr) return;
   let session;
+  const req = pending || playRequestXR();
+  // the browser's permission question shows on the PC screen, where a player wearing the headset can't see it
+  const nag = setTimeout(() => { PLAY.vrWait = true; toast('Waiting for VR. If Chrome asks to use your virtual reality devices on the PC screen, click Allow.'); }, 2500);
   try {
-    session = await (pending || playRequestXR());
-  } catch (err) { playVRHelp('The headset refused the VR session: ' + (err && (err.name + ': ' + err.message))); return; }
+    session = await req;
+  } catch (err) { clearTimeout(nag); PLAY.vrWait = false; playVRHelp('The headset refused the VR session: ' + (err && (err.name + ': ' + err.message))); return; }
+  clearTimeout(nag); PLAY.vrWait = false;
   if (!PLAY.on) { session.end().catch(() => {}); return; }
   if (document.pointerLockElement) document.exitPointerLock();
   playToggleMenu(false);
@@ -524,7 +533,8 @@ async function startXR(pending) {
   const xr = R.renderer.xr;
   xr.enabled = true; xr.setReferenceSpaceType('local-floor');
   try { R.renderer.setPixelRatio(1); } catch (e) { /* keep */ }
-  await xr.setSession(session);
+  try { await xr.setSession(session); }
+  catch (err) { console.error(err); PLAY.xr = false; PLAY.session = null; xr.enabled = false; session.end().catch(() => {}); playVRHelp('VR started but the 3D view could not attach to it: ' + (err && (err.name + ': ' + err.message))); return; }
   PLAY.gunModel.visible = false;
   playSetupHands();
   playVRWeaponModels();

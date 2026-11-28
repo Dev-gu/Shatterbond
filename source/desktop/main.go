@@ -7,6 +7,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net"
@@ -26,7 +27,7 @@ var webFS embed.FS
 const port = "47231"
 
 // appVersion lets a new copy notice an older one still holding the port.
-const appVersion = "36-play-vr2"
+const appVersion = "37-play-vr3"
 
 var lastBeat atomic.Int64
 var byeAt atomic.Int64
@@ -169,9 +170,39 @@ func launchVR(url string) error {
 	}
 	profile := filepath.Join(base, "Shatterbond", "BrowserVR")
 	os.MkdirAll(profile, 0o755)
+	allowVR(profile, url)
 	return exec.Command(exe, "--app="+url+"?vr=1", "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check",
 		"--window-size=1280,800", "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
 		"--enable-features=WebXR,WebXRHandInput").Start()
+}
+
+// allowVR pre-answers Chrome's "use your virtual reality devices" question for this one local site. The
+// question appears on the PC screen, not in the headset, so a player in VR never sees it and the headset
+// sits on its loading screen. Only the VR window's own profile is touched; open Chrome windows keep theirs.
+func allowVR(profile, url string) {
+	dir := filepath.Join(profile, "Default")
+	os.MkdirAll(dir, 0o755)
+	file := filepath.Join(dir, "Preferences")
+	prefs := map[string]any{}
+	if b, err := os.ReadFile(file); err == nil {
+		json.Unmarshal(b, &prefs)
+	}
+	sub := func(m map[string]any, k string) map[string]any {
+		if v, ok := m[k].(map[string]any); ok {
+			return v
+		}
+		v := map[string]any{}
+		m[k] = v
+		return v
+	}
+	origin := strings.TrimSuffix(url, "/") + ",*"
+	ex := sub(sub(sub(prefs, "profile"), "content_settings"), "exceptions")
+	for _, t := range []string{"vr", "ar", "hand_tracking"} {
+		sub(ex, t)[origin] = map[string]any{"setting": 1, "last_modified": "13350000000000000"}
+	}
+	if b, err := json.Marshal(prefs); err == nil {
+		os.WriteFile(file, b, 0o644)
+	}
 }
 
 func findBrowser() string {
